@@ -1887,7 +1887,7 @@ on conflict (tipe, nama) do nothing;
 
 -- Akun Manajer Trainer. Buat juga di Authentication -> Users dengan email yang sama.
 insert into public.profiles (nama, role, email)
-values ('Manajer Trainer', 'mt', 'mt@dailyreportlka.app')
+values ('AKHMAD SAIFUDDIN', 'mt', 'mt@dailyreportlka.app')
 on conflict (email) do nothing;
 
 update public.profiles p set auth_uid = u.id

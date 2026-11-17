@@ -7,6 +7,9 @@
 -- Data berikutnya ditambah lewat aplikasi (menu Kelola).
 -- =====================================================================
 
+-- 0. NAMA MANAJER TRAINER
+update public.profiles set nama = 'AKHMAD SAIFUDDIN' where email = 'mt@dailyreportlka.app';
+
 -- 1. TRAINER
 insert into public.profiles (nama, role, email)
 select v.nama, 'trainer', v.email from (values
