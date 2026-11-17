@@ -121,6 +121,21 @@ class _AkunPcScreenState extends State<AkunPcScreen> {
         'Password ${pc['nama']} direset');
   }
 
+  /// Hapus PERMANEN (MT & Trainer): akun, login, dan semua data penjualan, cek limit, laporan, kehadiran, target.
+  Future<void> _hapusPermanen(Map<String, dynamic> pc) async {
+    final ok = await confirmDialog(
+      context,
+      'Hapus permanen ${pc['nama']}?',
+      'Akun, login, dan SEMUA data PC ini (penjualan, cek limit, laporan, kehadiran, target) dihapus dan tidak bisa '
+          'dikembalikan. Pencapaian toko/area ikut berkurang. Stok toko tidak berubah.\n\nJika hanya berhenti bekerja '
+          'dan riwayatnya mau disimpan, pilih Nonaktifkan.',
+      yes: 'Hapus permanen',
+    );
+    if (!ok) return;
+    await _jalankan(() => Session.db.rpc('hapus_pc_permanen', params: {'p_pc': pc['id']}),
+        'PC ${pc['nama']} dihapus permanen');
+  }
+
   Future<void> _hapus(Map<String, dynamic> pc) async {
     final aktif = pc['aktif'] != false;
     final ok = await confirmDialog(
@@ -239,6 +254,7 @@ class _AkunPcScreenState extends State<AkunPcScreen> {
                 if (v == 'reset') _reset(p);
                 if (v == 'atur') aturPasswordDialog(context, profileId: '${p['id']}', nama: '${p['nama']}');
                 if (v == 'hapus') _hapus(p);
+                if (v == 'permanen') _hapusPermanen(p);
                 if (v == 'riwayat') showRiwayatLogin(context, '${p['id']}', '${p['nama']}', StatusOnline.dari(p, parseWib));
               },
               itemBuilder: (_) => [
@@ -247,6 +263,10 @@ class _AkunPcScreenState extends State<AkunPcScreen> {
                 if (p['auth_uid'] != null) const PopupMenuItem(value: 'atur', child: Text('Atur password baru')),
                 if (p['auth_uid'] != null) const PopupMenuItem(value: 'reset', child: Text('Reset (buat password sendiri)')),
                 PopupMenuItem(value: 'hapus', child: Text(p['aktif'] == false ? 'Aktifkan lagi' : 'Nonaktifkan PC')),
+                if (me.isMt || me.isTrainer)
+                  PopupMenuItem(
+                      value: 'permanen',
+                      child: Text('Hapus permanen', style: TextStyle(color: Colors.red.shade700))),
               ],
             ),
             ]),
