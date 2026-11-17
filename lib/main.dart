@@ -17,7 +17,7 @@ Future<void> main() async {
   await Supabase.initialize(url: AppConfig.supabaseUrl, anonKey: AppConfig.supabaseAnonKey);
   if (!kIsWeb) await NotifService.init();
   runApp(const DailyReportApp());
-  // Cek update saat aplikasi dibuka, setiap kembali dari latar belakang, dan tiap 30 menit.
+  // Cek update saat aplikasi dibuka, setiap kembali dari latar belakang (tanpa pengecekan berkala).
   UpdateService.start();
   // Tanda aktif (lampu online) setiap 2 menit selama aplikasi terbuka.
   PresenceService.start();

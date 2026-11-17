@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter/material.dart';
 
 import '../../data/lka.dart';
@@ -39,14 +37,16 @@ class AtasanHome extends StatefulWidget {
   State<AtasanHome> createState() => _AtasanHomeState();
 }
 
-class _AtasanHomeState extends State<AtasanHome> {
+/// Hemat kuota: data dimuat saat beranda dibuka, saat aplikasi dibuka lagi dari latar belakang,
+/// dan saat tombol muat ulang / tarik-ke-bawah. Tidak ada muat ulang otomatis berkala.
+class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
   int _tab = 0;
   DateTime _tanggal = wibToday();
   bool _loading = true;
   String? _error;
   Map<String, dynamic> _b = {};
   int _rev = 0;
-  Timer? _refresh;
+  DateTime? _dimuat;
 
   /// MT bisa membuka beranda versi satu Trainer; MT / Trainer bisa membuka versi satu Sales.
   Map<String, dynamic>? _trainer;
@@ -65,9 +65,7 @@ class _AtasanHomeState extends State<AtasanHome> {
   @override
   void initState() {
     super.initState();
-    _refresh = Timer.periodic(const Duration(minutes: 2), (_) {
-      if (mounted && _tab < 2) _load();
-    });
+    WidgetsBinding.instance.addObserver(this);
     _load();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) UpdateService.check(context);
@@ -76,11 +74,20 @@ class _AtasanHomeState extends State<AtasanHome> {
 
   @override
   void dispose() {
-    _refresh?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
+  /// Aplikasi dibuka lagi dari latar belakang: muat ulang (paling cepat sekali per 1 menit).
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed || !mounted || _tab == 2) return;
+    final d = _dimuat;
+    if (d == null || DateTime.now().difference(d) > const Duration(minutes: 1)) _load();
+  }
+
   Future<void> _load() async {
+    _dimuat = DateTime.now();
     setState(() {
       _loading = _b.isEmpty;
       _error = null;

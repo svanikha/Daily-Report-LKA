@@ -13,7 +13,7 @@ import 'session.dart';
 /// Update otomatis di dalam aplikasi.
 ///
 /// GitHub Actions mengunggah APK terbaru + latest.json ke bucket publik "apk" di Supabase.
-/// Aplikasi mengecek versi saat dibuka, setiap kembali dari latar belakang, dan tiap 30 menit.
+/// Aplikasi mengecek versi hanya saat dibuka dan setiap kembali dari latar belakang (hemat kuota).
 /// Jika ada versi baru, APK langsung diunduh di dalam aplikasi (dengan progres), lalu layar
 /// pasang Android terbuka. Android selalu meminta satu ketukan "Perbarui" dari pengguna;
 /// pemasangan tanpa ketukan sama sekali tidak diizinkan untuk aplikasi di luar Play Store.
@@ -39,7 +39,6 @@ class UpdateService {
     if (kIsWeb || _started || buildNumber == 0) return;
     _started = true;
     WidgetsBinding.instance.addObserver(_Lifecycle());
-    _timer = Timer.periodic(const Duration(minutes: 30), (_) => _check(force: true));
   }
 
   static void stop() => _timer?.cancel();
