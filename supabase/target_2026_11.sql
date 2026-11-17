@@ -27,9 +27,8 @@ select a.sales_id, date '2026-11-01', j.jenis, j.nilai
  cross join lateral (values ('unit', v.unit), ('fokus', v.fokus), ('iot', v.iot)) j(jenis, nilai)
 on conflict (sales_id, bulan, jenis) do update set nilai = excluded.nilai;
 
--- Target PC (dicocokkan lewat nama PC)
-create temp table t_pc (nama text, unit numeric, value numeric, fokus numeric, iot numeric);
-insert into t_pc values
+-- Target PC (dicocokkan lewat nama PC). Satu perintah tanpa tabel sementara, sekaligus menampilkan hasil.
+with v(nama, unit, value, fokus, iot) as (values
   ('RABIATUL ADHAWIAH', 35, 80000000, 5, 3),
   ('M. RAHMANI', 30, 80000000, 7, 3),
   ('DATIK PRIHATIN', 30, 70000000, 5, 3),
@@ -137,19 +136,19 @@ insert into t_pc values
   ('ISTIKAMAH', 70, 250000000, 13, 10),
   ('ERA NOVALLISTI', 45, 210000000, 9, 15),
   ('SILVI RESGITA PUTRI RISANTI', 70, 250000000, 9, 15),
-  ('SAPITRI', 70, 250000000, 9, 20);
-
-insert into public.pc_targets (pc_id, bulan, jenis, nilai)
-select p.id, date '2026-11-01', j.jenis, j.nilai
-  from t_pc v
-  join public.profiles p on p.role = 'pc' and upper(trim(p.nama)) = upper(trim(v.nama))
- cross join lateral (values ('unit', v.unit), ('value', v.value), ('fokus', v.fokus), ('iot', v.iot)) j(jenis, nilai)
-on conflict (pc_id, bulan, jenis) do update set nilai = excluded.nilai;
-
--- Hasil: jumlah yang masuk + nama yang tidak ketemu di aplikasi
+  ('SAPITRI', 70, 250000000, 9, 20)
+),
+masuk as (
+  insert into public.pc_targets (pc_id, bulan, jenis, nilai)
+  select p.id, date '2026-11-01', j.jenis, j.nilai
+    from v
+    join public.profiles p on p.role = 'pc' and upper(trim(p.nama)) = upper(trim(v.nama))
+   cross join lateral (values ('unit', v.unit), ('value', v.value), ('fokus', v.fokus), ('iot', v.iot)) j(jenis, nilai)
+  on conflict (pc_id, bulan, jenis) do update set nilai = excluded.nilai
+  returning pc_id
+)
 select 'Target masuk' as status,
        (select count(distinct sales_id) from public.sales_targets where bulan = date '2026-11-01') as sales,
-       (select count(distinct pc_id) from public.pc_targets where bulan = date '2026-11-01') as pc,
-       (select string_agg(v.nama, ', ') from t_pc v
+       (select count(distinct pc_id) from masuk) as pc,
+       (select string_agg(v.nama, ', ') from v
          where not exists (select 1 from public.profiles p where p.role = 'pc' and upper(trim(p.nama)) = upper(trim(v.nama)))) as pc_tidak_ketemu;
-drop table t_pc;
