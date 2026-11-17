@@ -10,6 +10,7 @@
 --   4. Beranda: keaktifan PC memakai aplikasi (urutan daftar PC).
 --   5. Keamanan: pemeriksaan izin tidak bisa dilewati oleh akses tanpa login.
 --   6. Tipe fokus dipilih MT / Trainer dari list produk (atur_fokus) + bonus per unit tiap tipe (kpi_fokus).
+--   7. Target Sales (sales_targets); target Trainer = jumlah target Sales yang dipegang.
 -- Aman dijalankan ulang. Data yang sudah ada TIDAK dihapus. JANGAN jalankan data_awal.sql lagi.
 -- =====================================================================
 
@@ -284,6 +285,18 @@ create table if not exists public.store_targets (
   updated_by uuid references public.profiles(id),
   updated_at timestamptz not null default now(),
   primary key (store_id, bulan, jenis)
+);
+
+-- Target bulanan per Sales (seluruh area Sales). Jika ada, menggantikan jumlah target toko untuk Sales itu.
+-- Target Trainer = jumlah target semua Sales yang dipegang.
+create table if not exists public.sales_targets (
+  sales_id uuid not null references public.profiles(id) on delete cascade,
+  bulan date not null check (extract(day from bulan) = 1),
+  jenis text not null check (jenis in ('unit', 'value', 'fokus', 'iot', 'iot_value')),
+  nilai numeric not null default 0 check (nilai >= 0),
+  updated_by uuid references public.profiles(id),
+  updated_at timestamptz not null default now(),
+  primary key (sales_id, bulan, jenis)
 );
 
 create table if not exists public.pc_targets (
@@ -721,7 +734,7 @@ end $$;
 do $$
 declare t text;
 begin
-  foreach t in array array['products', 'store_targets', 'pc_targets', 'pc_target_harian'] loop
+  foreach t in array array['products', 'store_targets', 'pc_targets', 'pc_target_harian', 'sales_targets'] loop
     execute format('drop trigger if exists trg_pengubah on public.%I', t);
     execute format('create trigger trg_pengubah before insert or update on public.%I for each row execute function public.set_pengubah()', t);
   end loop;
@@ -739,6 +752,7 @@ begin
     when 'products' then coalesce(j->>'area_id', '') || '|' || coalesce(j->>'kode', '')
     when 'store_targets' then (j->>'store_id') || '|' || (j->>'bulan') || '|' || (j->>'jenis')
     when 'pc_targets' then (j->>'pc_id') || '|' || (j->>'bulan') || '|' || (j->>'jenis')
+    when 'sales_targets' then (j->>'sales_id') || '|' || (j->>'bulan') || '|' || (j->>'jenis')
     when 'pc_target_harian' then (j->>'pc_id') || '|' || (j->>'tanggal')
     when 'insentif_produk' then (j->>'trainer_id') || '|' || (j->>'bulan') || '|' || (j->>'kode')
     when 'insentif_lain' then (j->>'trainer_id') || '|' || (j->>'bulan') || '|' || (j->>'kode')
@@ -758,7 +772,7 @@ end $$;
 do $$
 declare t text;
 begin
-  foreach t in array array['products', 'store_targets', 'pc_targets', 'pc_target_harian', 'kpi_gaji', 'kpi_tier', 'kpi_potongan',
+  foreach t in array array['products', 'store_targets', 'pc_targets', 'pc_target_harian', 'sales_targets', 'kpi_gaji', 'kpi_tier', 'kpi_potongan',
                            'kpi_aturan', 'insentif_produk', 'insentif_lain', 'kpi_fokus'] loop
     execute format('drop trigger if exists trg_audit on public.%I', t);
     execute format('create trigger trg_audit after insert or update or delete on public.%I for each row execute function public.audit_change()', t);
@@ -1095,7 +1109,7 @@ declare t text;
 begin
   foreach t in array array['profiles', 'areas', 'stores', 'trainer_sales', 'produk_master', 'products', 'competitor_brands',
                            'sales', 'checkins', 'competitor_sales', 'competitor_sales_detail',
-                           'leasing_checks', 'daily_reports', 'pc_day_status', 'store_targets', 'pc_targets', 'pc_target_harian',
+                           'leasing_checks', 'daily_reports', 'pc_day_status', 'store_targets', 'pc_targets', 'pc_target_harian', 'sales_targets',
                            'audit_log', 'login_log', 'kpi_gaji', 'kpi_tier', 'kpi_potongan', 'kpi_aturan',
                            'insentif_produk', 'insentif_lain', 'kpi_fokus'] loop
     execute format('alter table public.%I enable row level security', t);
@@ -1181,6 +1195,12 @@ create policy pc_targets_select on public.pc_targets for select to authenticated
 drop policy if exists pc_targets_manage on public.pc_targets;
 create policy pc_targets_manage on public.pc_targets for all to authenticated
   using (public.can_manage_store(public.pc_store(pc_id))) with check (public.can_manage_store(public.pc_store(pc_id)));
+drop policy if exists sales_targets_select on public.sales_targets;
+create policy sales_targets_select on public.sales_targets for select to authenticated using (public.is_atasan());
+drop policy if exists sales_targets_manage on public.sales_targets;
+create policy sales_targets_manage on public.sales_targets for all to authenticated
+  using (public.is_mt() or exists (select 1 from public.trainer_sales x where x.sales_id = sales_targets.sales_id and x.trainer_id = public.my_profile_id()))
+  with check (public.is_mt() or exists (select 1 from public.trainer_sales x where x.sales_id = sales_targets.sales_id and x.trainer_id = public.my_profile_id()));
 drop policy if exists pc_target_harian_select on public.pc_target_harian;
 create policy pc_target_harian_select on public.pc_target_harian for select to authenticated using (public.can_view_pc(pc_id));
 drop policy if exists pc_target_harian_manage on public.pc_target_harian;
@@ -1792,6 +1812,15 @@ begin
       from toko t cross join (values ('unit'), ('value'), ('fokus'), ('iot'), ('iot_value')) j(jenis)
   ),
   bertugas as (select * from pc where libur is null),
+  tgt_sales as (   -- target per Sales per jenis: target Sales jika diisi, selain itu jumlah target toko
+    select x.sales_id, j.jenis,
+           coalesce((select nullif(st.nilai, 0) from public.sales_targets st where st.sales_id = x.sales_id and st.bulan = v_bulan and st.jenis = j.jenis),
+                    (select sum(t.nilai) from tgt_toko t join public.stores s2 on s2.id = t.store_id join public.areas a2 on a2.id = s2.area_id
+                      where a2.sales_id = x.sales_id and t.jenis = j.jenis), 0) as nilai
+      from (select distinct a.sales_id from public.stores st0 join public.areas a on a.id = st0.area_id
+             where st0.id in (select id from toko) and a.sales_id is not null) x
+     cross join (values ('unit'), ('value'), ('fokus'), ('iot'), ('iot_value')) j(jenis)
+  ),
   tt_toko as (   -- toko per Trainer (lewat Sales area toko)
     select ts.trainer_id, st.id as store_id
       from public.stores st join public.areas a on a.id = st.area_id join public.trainer_sales ts on ts.sales_id = a.sales_id
@@ -1820,8 +1849,10 @@ begin
     'target', case when p_pc is not null
                    then (select coalesce(jsonb_object_agg(jenis, nilai), '{}'::jsonb) from public.pc_targets
                           where pc_id = p_pc and bulan = v_bulan)
+                   when p_store is not null then (select coalesce(jsonb_object_agg(jenis, total), '{}'::jsonb)
+                           from (select jenis, sum(nilai) as total from tgt_toko group by jenis) t)
                    else (select coalesce(jsonb_object_agg(jenis, total), '{}'::jsonb)
-                           from (select jenis, sum(nilai) as total from tgt_toko group by jenis) t) end,
+                           from (select jenis, sum(nilai) as total from tgt_sales group by jenis) t) end,
     'nosell_total', coalesce((select sum(nosell) from pc_ns), 0),
     'produktivitas', jsonb_build_object(
       'pc_bertugas', (select count(*) from bertugas),
@@ -1854,18 +1885,18 @@ begin
                              where s.tipe = 'HP' and aa.sales_id is not distinct from a.sales_id), 0),
           'value', coalesce((select sum(subtotal) from s join public.stores st on st.id = s.store_id join public.areas aa on aa.id = st.area_id
                               where s.tipe = 'HP' and aa.sales_id is not distinct from a.sales_id), 0),
-          'target_unit', coalesce((select sum(t.nilai) from tgt_toko t join public.stores st on st.id = t.store_id join public.areas aa on aa.id = st.area_id
-                                    where t.jenis = 'unit' and aa.sales_id is not distinct from a.sales_id), 0),
-          'target_value', coalesce((select sum(t.nilai) from tgt_toko t join public.stores st on st.id = t.store_id join public.areas aa on aa.id = st.area_id
-                                     where t.jenis = 'value' and aa.sales_id is not distinct from a.sales_id), 0),
+          'target_unit', coalesce((select nilai from tgt_sales t where t.jenis = 'unit' and t.sales_id is not distinct from a.sales_id), 0),
+
+          'target_value', coalesce((select nilai from tgt_sales t where t.jenis = 'value' and t.sales_id is not distinct from a.sales_id), 0),
+
           'fokus', coalesce((select sum(qty) from s join public.stores st on st.id = s.store_id join public.areas aa on aa.id = st.area_id
                               where s.fokus is not null and aa.sales_id is not distinct from a.sales_id), 0),
-          'target_fokus', coalesce((select sum(t.nilai) from tgt_toko t join public.stores st on st.id = t.store_id join public.areas aa on aa.id = st.area_id
-                                     where t.jenis = 'fokus' and aa.sales_id is not distinct from a.sales_id), 0),
+          'target_fokus', coalesce((select nilai from tgt_sales t where t.jenis = 'fokus' and t.sales_id is not distinct from a.sales_id), 0),
+
           'iot', coalesce((select sum(qty) from s join public.stores st on st.id = s.store_id join public.areas aa on aa.id = st.area_id
                             where s.tipe = 'IOT' and aa.sales_id is not distinct from a.sales_id), 0),
-          'target_iot', coalesce((select sum(t.nilai) from tgt_toko t join public.stores st on st.id = t.store_id join public.areas aa on aa.id = st.area_id
-                                   where t.jenis = 'iot' and aa.sales_id is not distinct from a.sales_id), 0),
+          'target_iot', coalesce((select nilai from tgt_sales t where t.jenis = 'iot' and t.sales_id is not distinct from a.sales_id), 0),
+
           'nosell', coalesce((select sum(n.nosell) from pc_ns n join public.stores st on st.id = n.store_id join public.areas aa on aa.id = st.area_id
                                where aa.sales_id is not distinct from a.sales_id), 0),
           'toko', count(distinct st0.id),
@@ -1883,11 +1914,11 @@ begin
           'unit', coalesce((select sum(qty) from s where s.tipe = 'HP' and s.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
           'value', coalesce((select sum(subtotal) from s where s.tipe = 'HP' and s.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
           'fokus', coalesce((select sum(qty) from s where s.fokus is not null and s.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
-          'target_unit', coalesce((select sum(nilai) from tgt_toko t where t.jenis = 'unit' and t.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
-          'target_value', coalesce((select sum(nilai) from tgt_toko t where t.jenis = 'value' and t.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
-          'target_fokus', coalesce((select sum(nilai) from tgt_toko t where t.jenis = 'fokus' and t.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
+          'target_unit', coalesce((select sum(nilai) from tgt_sales t where t.jenis = 'unit' and t.sales_id in (select sales_id from public.trainer_sales where trainer_id = tt.trainer_id)), 0),
+          'target_value', coalesce((select sum(nilai) from tgt_sales t where t.jenis = 'value' and t.sales_id in (select sales_id from public.trainer_sales where trainer_id = tt.trainer_id)), 0),
+          'target_fokus', coalesce((select sum(nilai) from tgt_sales t where t.jenis = 'fokus' and t.sales_id in (select sales_id from public.trainer_sales where trainer_id = tt.trainer_id)), 0),
           'iot', coalesce((select sum(qty) from s where s.tipe = 'IOT' and s.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
-          'target_iot', coalesce((select sum(nilai) from tgt_toko t where t.jenis = 'iot' and t.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
+          'target_iot', coalesce((select sum(nilai) from tgt_sales t where t.jenis = 'iot' and t.sales_id in (select sales_id from public.trainer_sales where trainer_id = tt.trainer_id)), 0),
           'nosell', coalesce((select sum(n.nosell) from pc_ns n where n.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
           'toko', (select count(*) from tt_toko where trainer_id = tt.trainer_id),
           'pc', (select count(*) from pc where pc.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id))) as x
