@@ -51,7 +51,7 @@ class _KpiScreenState extends State<KpiScreen> {
   Profile get me => Session.current!;
   List<Map<String, dynamic>> _trainers = []; // {id, nama, areas: [id]}
   String? _trainer;
-  bool get _bisaUbah => me.isTrainer && _trainer == me.id;
+  bool get _bisaUbah => _trainer != null && (me.isMt || (me.isTrainer && _trainer == me.id));
   bool get _kunci => _busy || !_bisaUbah;
   DateTime _bulan = monthStart();
   bool _loading = true;
@@ -180,7 +180,7 @@ class _KpiScreenState extends State<KpiScreen> {
         yes: 'Salin');
     if (!ok) return;
     await _jalankan(
-      () => Session.db.rpc('salin_kpi', params: {'p_dari': ymd(dari), 'p_ke': _b}),
+      () => Session.db.rpc('salin_kpi', params: {'p_dari': ymd(dari), 'p_ke': _b, 'p_trainer': _trainer}),
       'Aturan ${namaBulan(_bulan)} siap diubah',
     );
   }
@@ -237,7 +237,7 @@ class _KpiScreenState extends State<KpiScreen> {
           if (!_loading && !_bisaUbah)
             const Padding(
               padding: EdgeInsets.fromLTRB(12, 8, 12, 0),
-              child: InfoBanner('Hanya bisa dilihat. KPI & insentif diubah oleh Trainer pemilik wilayah.', icon: Icons.lock_outline),
+              child: InfoBanner('Hanya bisa dilihat. KPI & insentif diubah oleh Trainer pemilik wilayah atau MT.', icon: Icons.lock_outline),
             ),
           Expanded(
             child: _loading

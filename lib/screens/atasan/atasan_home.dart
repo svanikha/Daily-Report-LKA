@@ -227,6 +227,13 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
     _load();
   }
 
+  /// Riwayat penjualan cakupan beranda ini (per hari, per kategori tipe).
+  Future<void> _riwayat(String tipe) async {
+    await Navigator.of(context).push(MaterialPageRoute(
+      builder: (_) => RiwayatPenjualanScreen(filter: _filter, tanggal: _tanggal, tipe: tipe, judul: _judul),
+    ));
+  }
+
   // ------------------------------------------------------------------
   Widget _isi({required bool laporan}) {
     if (_loading) return const Center(child: CircularProgressIndicator());
@@ -267,8 +274,15 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
             style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
           ),
         ),
-        SellOutCard(hari: asMap(_b['hari']), bulan: asMap(_b['bulan']), target: asMap(_b['target']), hk: hk, judul: judul),
-        RingkasanGajiCard(key: ValueKey('gaji-$key'), filter: _filter, tanggal: _tanggal, onTapPc: _bukaPc),
+        SellOutCard(
+          hari: asMap(_b['hari']),
+          bulan: asMap(_b['bulan']),
+          target: asMap(_b['target']),
+          hk: hk,
+          judul: judul,
+          onTapHp: () => _riwayat('HP'),
+          onTapIot: () => _riwayat('IOT'),
+        ),
         KontribusiTipe(key: ValueKey('kt-$key'), filter: _filter, tanggal: _tanggal),
         KontribusiHpIot(bulan: asMap(_b['bulan'])),
         KontribusiBayar(key: ValueKey('kb-$key'), filter: _filter, tanggal: _tanggal),
@@ -306,15 +320,15 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
             onTapTrainer: _bukaTrainer,
             onTapSales: _bukaSales,
           ),
+          SebaranPcCard(pcs: pcs, onTapPc: _bukaPc),
         ],
         if (_level == 'trainer') ...[
           peringkatSales,
           SebaranPcCard(pcs: pcs, onTapPc: _bukaPc),
         ],
-        DaftarPcCard(rows: pcs, hk: hk, hariIni: hariIni, onTap: _bukaPc),
-        StatusPcCard(pcs: pcs, onTapPc: _bukaPc),
+        PencapaianStatusPcCard(pcs: pcs, hk: hk, hariIni: hariIni, onTap: _bukaPc),
         ProduktivitasPcCard(pcs: pcs),
-        if (_level != 'mt') NosellPcCard(pcs: pcs, onTapPc: _bukaPc),
+        NosellPcCard(pcs: pcs, onTapPc: _bukaPc),
         UpdateStokCard(data: asMap(_b['stok']), onTapToko: _bukaStok),
         Card(
           child: ListTile(
@@ -353,7 +367,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
       item(Icons.sell, 'Produk HP & IoT', me.isMt ? 'List produk per area, tambah ke semua area' : 'List produk $cak',
           const ProdukScreen()),
       item(Icons.payments, 'KPI & insentif',
-          me.isTrainer ? 'Atur UMR, tier, potongan, bonus/denda, insentif wilayahmu' : 'Lihat aturan KPI per Trainer',
+          me.isMt ? 'Atur KPI & insentif semua wilayah Trainer' : (me.isTrainer ? 'Atur UMR, tier, potongan, bonus/denda, insentif wilayahmu' : 'Lihat aturan KPI per Trainer'),
           const KpiScreen()),
       item(Icons.flag, 'Target bulanan', 'Target per toko dan per PC ($cak)', const TargetScreen()),
       item(Icons.event_busy, 'Kehadiran PC', 'Offday, izin, sakit PC ($cak)', const OffdayScreen()),

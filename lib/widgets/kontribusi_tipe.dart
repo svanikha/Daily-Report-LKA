@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../data/lka.dart';
 import '../services/session.dart';
 import '../utils.dart';
+import 'sell_out_card.dart';
 import 'widgets.dart';
 
 /// Nama tipe tanpa varian RAM/ROM: "A6X [4/64]" -> "A6X".
@@ -124,16 +125,6 @@ class _KontribusiTipeState extends State<KontribusiTipe> {
             const SizedBox(height: 6),
             for (final g in grupUrut) ..._grupRows(g, grup[g]!, total),
           ],
-          Align(
-            alignment: Alignment.centerRight,
-            child: TextButton.icon(
-              onPressed: () => Navigator.of(context).push(MaterialPageRoute(
-                builder: (_) => RiwayatPenjualanScreen(filter: widget.filter, tanggal: widget.tanggal),
-              )),
-              icon: const Icon(Icons.history, size: 18),
-              label: const Text('Riwayat penjualan'),
-            ),
-          ),
         ]),
       ),
     );
@@ -250,12 +241,19 @@ class _KontribusiTipeState extends State<KontribusiTipe> {
   String _pct(num v, num total) => total > 0 ? '${(v / total * 100).toStringAsFixed(0)}%' : '-';
 }
 
-/// Riwayat penjualan bulan tertentu, dikelompokkan per series lalu per tipe.
-/// Setiap transaksi: tanggal, varian, qty, kategori user, dan cara bayar.
+/// Riwayat penjualan bulan tertentu, urut tanggal (terbaru di atas). Tiap tanggal dirinci per kategori
+/// tipe (A6X, Reno 16, Pad, ...) dengan warna series; ketuk tipe untuk melihat transaksinya
+/// (varian, PC & toko, kategori user, cara bayar).
 class RiwayatPenjualanScreen extends StatefulWidget {
   final Cakupan filter;
   final DateTime tanggal;
-  const RiwayatPenjualanScreen({super.key, this.filter = const Cakupan(), required this.tanggal});
+
+  /// 'HP', 'IOT', atau null (semua) saat dibuka.
+  final String? tipe;
+
+  /// Keterangan cakupan di judul, misal "area Sampit".
+  final String? judul;
+  const RiwayatPenjualanScreen({super.key, this.filter = const Cakupan(), required this.tanggal, this.tipe, this.judul});
 
   @override
   State<RiwayatPenjualanScreen> createState() => _RiwayatPenjualanScreenState();
@@ -266,10 +264,10 @@ class _RiwayatPenjualanScreenState extends State<RiwayatPenjualanScreen> {
   bool _loading = true;
   String? _error;
   List<Map<String, dynamic>> _rows = [];
-  String _filter = 'Semua';
+  late String _filter = switch (widget.tipe) { 'HP' => 'HP', 'IOT' => 'IoT', _ => 'Semua' };
   final Set<String> _buka = {};
 
-  static const _filters = ['Semua', 'A Series', 'Reno Series', 'Find Series', 'IoT'];
+  static const _filters = ['Semua', 'HP', 'IoT', 'A Series', 'Reno Series', 'Find Series'];
 
   @override
   void initState() {
@@ -283,17 +281,26 @@ class _RiwayatPenjualanScreenState extends State<RiwayatPenjualanScreen> {
       _error = null;
     });
     try {
+      final db = Session.db;
+      final f = widget.filter;
+      List<String>? salesTrainer;
+      if (f.trainerId != null && f.salesId == null) {
+        salesTrainer = [
+          for (final r in asList(await db.from('trainer_sales').select('sales_id').eq('trainer_id', f.trainerId!)))
+            '${r['sales_id']}'
+        ];
+      }
       final akhir = DateTime(_bulan.year, _bulan.month + 1, 0);
-      var q = Session.db
+      var q = db
           .from('sales')
           .select('id,tanggal,tipe,grup,nama_produk,qty,subtotal,metode,cara_bayar,kategori_user,created_at,'
               'stores!inner(nama,areas!inner(sales_id)),pc:profiles!sales_pc_id_fkey(nama)')
           .gte('tanggal', ymd(_bulan))
           .lte('tanggal', ymd(akhir));
-      final f = widget.filter;
       if (f.pcId != null) q = q.eq('pc_id', f.pcId!);
       if (f.storeId != null) q = q.eq('store_id', f.storeId!);
       if (f.salesId != null) q = q.eq('stores.areas.sales_id', f.salesId!);
+      if (salesTrainer != null) q = q.inFilter('stores.areas.sales_id', salesTrainer);
       _rows = asList(await q.order('tanggal', ascending: false).order('created_at', ascending: false));
     } catch (e) {
       _error = errMsg(e);
@@ -304,30 +311,44 @@ class _RiwayatPenjualanScreenState extends State<RiwayatPenjualanScreen> {
   void _geser(int n) {
     final b = DateTime(_bulan.year, _bulan.month + n, 1);
     if (b.isAfter(wibToday())) return;
-    setState(() => _bulan = b);
+    setState(() {
+      _bulan = b;
+      _buka.clear();
+    });
     _load();
   }
 
   String _grupDari(Map<String, dynamic> r) => r['tipe'] == 'IOT' ? 'IoT' : '${r['grup'] ?? '-'}';
 
+  bool _cocok(Map<String, dynamic> r) => switch (_filter) {
+        'Semua' => true,
+        'HP' => r['tipe'] == 'HP',
+        'IoT' => r['tipe'] == 'IOT',
+        _ => _grupDari(r) == _filter,
+      };
+
   @override
   Widget build(BuildContext context) {
-    final list = _rows.where((r) => _filter == 'Semua' || _grupDari(r) == _filter).toList();
-    final hp = list.where((r) => r['tipe'] == 'HP');
-    final unitHp = hp.fold<num>(0, (a, r) => a + toNum(r['qty']));
+    final list = _rows.where(_cocok).toList();
+    final unitHp = list.where((r) => r['tipe'] == 'HP').fold<num>(0, (a, r) => a + toNum(r['qty']));
     final unitIot = list.where((r) => r['tipe'] == 'IOT').fold<num>(0, (a, r) => a + toNum(r['qty']));
     final value = list.fold<num>(0, (a, r) => a + toNum(r['subtotal']));
 
-    // grup -> tipe -> transaksi
-    final grup = <String, Map<String, List<Map<String, dynamic>>>>{};
+    // tanggal -> transaksi (urutan dari server: tanggal terbaru dulu)
+    final perTgl = <String, List<Map<String, dynamic>>>{};
     for (final r in list) {
-      grup.putIfAbsent(_grupDari(r), () => {}).putIfAbsent(namaTipe('${r['nama_produk']}'), () => []).add(r);
+      perTgl.putIfAbsent('${r['tanggal']}', () => []).add(r);
     }
-    final grupUrut = grup.keys.toList()..sort((a, b) => urutanGrup(a).compareTo(urutanGrup(b)));
     final bisaMaju = !DateTime(_bulan.year, _bulan.month + 1, 1).isAfter(wibToday());
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Riwayat penjualan')),
+      appBar: AppBar(
+        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('Riwayat penjualan'),
+          if (widget.judul != null)
+            Text(widget.judul!, style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal)),
+        ]),
+      ),
       body: Column(children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(4, 4, 4, 0),
@@ -370,7 +391,7 @@ class _RiwayatPenjualanScreenState extends State<RiwayatPenjualanScreen> {
                           ),
                         ),
                         if (list.isEmpty) const EmptyState(icon: Icons.receipt_long, text: 'Belum ada penjualan'),
-                        for (final g in grupUrut) ..._grup(g, grup[g]!),
+                        for (final e in perTgl.entries) ..._hari(e.key, e.value),
                       ]),
                     ),
         ),
@@ -383,25 +404,41 @@ class _RiwayatPenjualanScreenState extends State<RiwayatPenjualanScreen> {
         Text(label, style: const TextStyle(fontSize: 12)),
       ]);
 
-  List<Widget> _grup(String g, Map<String, List<Map<String, dynamic>>> tipe) {
-    final c = warnaGrup(g);
-    final unit = tipe.values.expand((l) => l).fold<num>(0, (a, r) => a + toNum(r['qty']));
-    final tipeUrut = tipe.keys.toList()..sort();
+  /// Satu tanggal: judul + total, lalu kartu per kategori tipe (urut series, lalu unit terbanyak).
+  List<Widget> _hari(String tgl, List<Map<String, dynamic>> rows) {
+    final d = parseDate(tgl);
+    final hp = rows.where((r) => r['tipe'] == 'HP').fold<num>(0, (a, r) => a + toNum(r['qty']));
+    final iot = rows.where((r) => r['tipe'] == 'IOT').fold<num>(0, (a, r) => a + toNum(r['qty']));
+    final value = rows.fold<num>(0, (a, r) => a + toNum(r['subtotal']));
+    // kategori tipe -> transaksi
+    final tipe = <String, List<Map<String, dynamic>>>{};
+    final grupTipe = <String, String>{};
+    for (final r in rows) {
+      final t = namaTipe('${r['nama_produk']}');
+      tipe.putIfAbsent(t, () => []).add(r);
+      grupTipe[t] = _grupDari(r);
+    }
+    num unitOf(String t) => tipe[t]!.fold<num>(0, (a, r) => a + toNum(r['qty']));
+    final urut = tipe.keys.toList()
+      ..sort((a, b) {
+        final g = urutanGrup(grupTipe[a]!).compareTo(urutanGrup(grupTipe[b]!));
+        return g != 0 ? g : unitOf(b).compareTo(unitOf(a));
+      });
     return [
       Padding(
-        padding: const EdgeInsets.only(top: 12, bottom: 4),
+        padding: const EdgeInsets.only(top: 14, bottom: 4),
         child: Row(children: [
-          Container(width: 10, height: 10, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
-          const SizedBox(width: 8),
-          Expanded(child: Text(g, style: TextStyle(fontWeight: FontWeight.bold, color: c, fontSize: 15))),
-          Text('${angka(unit)} unit', style: TextStyle(fontWeight: FontWeight.bold, color: c)),
+          Expanded(child: Text(hariTgl(d), style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+          Text('HP ${angka(hp)} · IoT ${angka(iot)} · ${rupiahSingkat(value)}',
+              style: TextStyle(fontSize: 12, color: Colors.grey.shade800, fontWeight: FontWeight.w600)),
         ]),
       ),
-      for (final t in tipeUrut) _tipeCard('$g|$t', t, tipe[t]!, c),
+      for (final t in urut) _tipeCard('$tgl|$t', t, grupTipe[t]!, tipe[t]!),
     ];
   }
 
-  Widget _tipeCard(String key, String tipe, List<Map<String, dynamic>> trx, Color c) {
+  Widget _tipeCard(String key, String tipe, String grup, List<Map<String, dynamic>> trx) {
+    final c = warnaGrup(grup);
     final unit = trx.fold<num>(0, (a, r) => a + toNum(r['qty']));
     final value = trx.fold<num>(0, (a, r) => a + toNum(r['subtotal']));
     final buka = _buka.contains(key);
@@ -413,16 +450,18 @@ class _RiwayatPenjualanScreenState extends State<RiwayatPenjualanScreen> {
       varian[k] = (varian[k] ?? 0) + toNum(r['qty']);
     }
     return Card(
-      margin: const EdgeInsets.only(bottom: 6),
+      margin: const EdgeInsets.only(bottom: 4),
       child: Column(children: [
         ListTile(
           dense: true,
           onTap: () => setState(() => buka ? _buka.remove(key) : _buka.add(key)),
+          leading: Container(width: 10, height: 10, decoration: BoxDecoration(color: c, shape: BoxShape.circle)),
+          minLeadingWidth: 10,
           title: Text(tipe, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-          subtitle: Text([for (final e in varian.entries) '${e.key}: ${angka(e.value)}'].join(' · ')),
+          subtitle: Text('$grup · ${[for (final e in varian.entries) '${e.key}: ${angka(e.value)}'].join(' · ')}'),
           trailing: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.end, children: [
             Text('${angka(unit)} unit', style: TextStyle(fontWeight: FontWeight.bold, color: c)),
-            Text(rupiah(value), style: const TextStyle(fontSize: 11)),
+            Text(rupiahSingkat(value), style: const TextStyle(fontSize: 11)),
           ]),
         ),
         if (buka)
@@ -435,8 +474,8 @@ class _RiwayatPenjualanScreenState extends State<RiwayatPenjualanScreen> {
                   padding: const EdgeInsets.symmetric(vertical: 3),
                   child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     SizedBox(
-                      width: 46,
-                      child: Text(tglPendek(parseDate('${r['tanggal']}')), style: const TextStyle(fontSize: 12)),
+                      width: 42,
+                      child: Text(jamMenit(parseWib('${r['created_at']}')), style: const TextStyle(fontSize: 12)),
                     ),
                     Expanded(
                       child: Text(

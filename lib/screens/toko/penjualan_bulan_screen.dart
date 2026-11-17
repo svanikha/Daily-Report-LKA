@@ -3,12 +3,13 @@ import 'package:flutter/material.dart';
 import '../../data/lka.dart';
 import '../../services/session.dart';
 import '../../utils.dart';
+import '../../widgets/kontribusi_tipe.dart';
 import '../../widgets/widgets.dart';
 import 'penjualan_screen.dart';
 import 'sale_form.dart';
 
-/// Riwayat penjualan satu PC selama satu bulan, dikelompokkan per tanggal.
-/// Ketuk penjualan untuk mengubah (PC: tgl 1 s.d. hari ini di bulan berjalan), ikon tempat sampah
+/// Riwayat penjualan satu PC selama satu bulan: per tanggal (terbaru di atas), lalu per kategori tipe.
+/// Ketuk penjualan untuk mengubah (PC: tanggal berapa pun s.d. hari ini), ikon tempat sampah
 /// untuk menghapus, dan ketuk judul tanggal untuk membuka / menambah penjualan tanggal itu.
 class PenjualanBulanScreen extends StatefulWidget {
   final PcHari toko;
@@ -112,7 +113,6 @@ class _PenjualanBulanScreenState extends State<PenjualanBulanScreen> {
     }
     final bisaMaju = !DateTime(_bulan.year, _bulan.month + 1, 1).isAfter(wibToday());
     final me = Session.current;
-    final bulanIni = _bulan.year == wibToday().year && _bulan.month == wibToday().month;
 
     return PopScope(
       canPop: false,
@@ -169,10 +169,8 @@ class _PenjualanBulanScreenState extends State<PenjualanBulanScreen> {
                             ),
                           ),
                           if (me?.isPc ?? false)
-                            InfoBanner(
-                              bulanIni
-                                  ? 'Ketuk penjualan untuk mengubah jika salah input. Bisa untuk tgl 1 s.d. hari ini di bulan ini.'
-                                  : 'Bulan lalu hanya bisa dilihat. Hubungi Sales jika ada koreksi.',
+                            const InfoBanner(
+                              'Ketuk penjualan untuk mengubah jika salah input, atau ketuk tanggal untuk menambah.',
                               icon: Icons.edit_note,
                             ),
                           if (list.isEmpty) const EmptyState(icon: Icons.receipt_long, text: 'Belum ada penjualan'),
@@ -196,6 +194,16 @@ class _PenjualanBulanScreenState extends State<PenjualanBulanScreen> {
     final iot = rows.where((r) => r['tipe'] == 'IOT').fold<num>(0, (a, r) => a + toNum(r['qty']));
     final value = rows.fold<num>(0, (a, r) => a + toNum(r['subtotal']));
     final boleh = _boleh(d);
+    final tipe = <String, List<Map<String, dynamic>>>{};
+    for (final r in rows) {
+      tipe.putIfAbsent(namaTipe('${r['nama_produk']}'), () => []).add(r);
+    }
+    String grupOf(Map<String, dynamic> r) => r['tipe'] == 'IOT' ? 'IoT' : '${r['grup'] ?? '-'}';
+    final urut = tipe.keys.toList()
+      ..sort((a, b) {
+        final g = urutanGrup(grupOf(tipe[a]!.first)).compareTo(urutanGrup(grupOf(tipe[b]!.first)));
+        return g != 0 ? g : a.compareTo(b);
+      });
     return [
       InkWell(
         onTap: () => _bukaTanggal(d),
@@ -209,7 +217,17 @@ class _PenjualanBulanScreenState extends State<PenjualanBulanScreen> {
           ]),
         ),
       ),
-      for (final r in rows)
+      for (final k in urut) ...[
+        Padding(
+          padding: const EdgeInsets.fromLTRB(4, 4, 4, 2),
+          child: Row(children: [
+            Container(width: 8, height: 8, decoration: BoxDecoration(color: warnaGrup(grupOf(tipe[k]!.first)), shape: BoxShape.circle)),
+            const SizedBox(width: 6),
+            Expanded(child: Text('$k · ${grupOf(tipe[k]!.first)}', style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w600, color: warnaGrup(grupOf(tipe[k]!.first))))),
+            Text('${angka(tipe[k]!.fold<num>(0, (a, r) => a + toNum(r['qty'])))} unit', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.w600)),
+          ]),
+        ),
+        for (final r in tipe[k]!)
         Card(
           margin: const EdgeInsets.only(bottom: 4),
           child: ListTile(
@@ -230,6 +248,7 @@ class _PenjualanBulanScreenState extends State<PenjualanBulanScreen> {
                 : null,
           ),
         ),
+      ],
     ];
   }
 }

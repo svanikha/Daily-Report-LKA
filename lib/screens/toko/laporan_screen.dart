@@ -10,7 +10,7 @@ import '../../theme.dart';
 import '../../utils.dart';
 import '../../widgets/widgets.dart';
 
-/// Gambar "Daily Report LKA" satu PC untuk dikirim ke grup WhatsApp: ringkasan dan tabel MS Allbrand.
+/// Gambar "Daily Report LKA" satu PC untuk dibagikan ke grup Feishu / Lark: ringkasan dan tabel MS Allbrand.
 class LaporanScreen extends StatefulWidget {
   final PcHari pc;
   const LaporanScreen({super.key, required this.pc});
@@ -76,7 +76,7 @@ class _LaporanScreenState extends State<LaporanScreen> {
           child: FilledButton.icon(
             onPressed: (_loading || _sharing || _error != null) ? null : _share,
             icon: busyIcon(_sharing, Icons.share),
-            label: const Text('Kirim ke grup WhatsApp'),
+            label: const Text('Bagikan ke Feishu / Lark'),
             style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
           ),
         ),

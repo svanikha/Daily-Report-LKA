@@ -141,23 +141,21 @@ class PcHari {
   bool get milikSaya => Session.current?.id == pcId;
 
   /// Sama dengan server can_write_daily / can_write_pc (stok, cek limit, tanda nihil).
+  /// PC: datanya sendiri, tanggal berapa pun s.d. hari ini, tanpa batas jam.
   bool get bolehIsiHarian {
     final me = Session.current;
     if (me == null || tanggal.isAfter(wibToday())) return false;
-    if (me.isPc) return milikSaya && hariIni && !lewatBatasLaporan();
+    if (me.isPc) return milikSaya;
     return true; // atasan: koreksi data PC di cakupannya (dijaga server)
   }
 
   /// Sama dengan server can_write_sales.
-  bool get bolehIsiPenjualan {
-    final me = Session.current;
-    final today = wibToday();
-    if (me == null || tanggal.isAfter(today)) return false;
-    if (me.isPc) return milikSaya && tanggal.year == today.year && tanggal.month == today.month;
-    return true;
-  }
+  bool get bolehIsiPenjualan => bolehIsiHarian;
 
-  String get alasanTerkunci => 'Input PC hanya untuk hari ini sampai pukul $batasLaporanText WIB.';
+  /// Kirim laporan harian tetap hanya hari ini sebelum batas jam laporan.
+  bool get bolehKirimLaporan => (Session.current?.isPc ?? false) && milikSaya && hariIni && !lewatBatasLaporan();
+
+  String get alasanTerkunci => 'Tanggal ini belum bisa diisi.';
 }
 
 /// Label kehadiran PC: OFFDAY / IZIN / SAKIT.

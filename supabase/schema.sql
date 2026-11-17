@@ -176,6 +176,9 @@ create table if not exists public.stok_mutasi (
   waktu timestamptz not null default now()
 );
 create index if not exists stok_mutasi_idx on public.stok_mutasi(store_id, tanggal);
+alter table public.stok_mutasi drop constraint if exists stok_mutasi_jenis_check;
+alter table public.stok_mutasi add constraint stok_mutasi_jenis_check
+  check (jenis in ('awal', 'masuk', 'koreksi', 'jual', 'batal_jual'));
 
 -- Tanda "stok sudah dicek hari ini" per toko + total stok saat itu (untuk laporan & export)
 create table if not exists public.stok_update (
@@ -244,6 +247,22 @@ create table if not exists public.pc_day_status (
   status text not null check (status in ('offday', 'izin', 'sakit')),
   dibuat_oleh uuid references public.profiles(id),
   dibuat_pada timestamptz not null default now(),
+  primary key (pc_id, tanggal)
+);
+alter table public.pc_day_status drop constraint if exists pc_day_status_status_check;
+alter table public.pc_day_status add constraint pc_day_status_status_check check (status in ('offday', 'izin', 'sakit'));
+
+-- Target harian yang diatur atasan untuk satu PC pada satu tanggal (menggantikan hitungan otomatis).
+-- Kolom kosong = pakai hitungan otomatis (sisa target ÷ sisa hari kerja).
+create table if not exists public.pc_target_harian (
+  pc_id uuid not null references public.profiles(id) on delete cascade,
+  tanggal date not null,
+  unit numeric check (unit >= 0),
+  value numeric check (value >= 0),
+  fokus numeric check (fokus >= 0),
+  iot numeric check (iot >= 0),
+  updated_by uuid references public.profiles(id),
+  updated_at timestamptz not null default now(),
   primary key (pc_id, tanggal)
 );
 
@@ -435,26 +454,34 @@ $$;
 
 create or replace function public.in_cakupan(p_area int) returns boolean
 language sql stable security definer set search_path = public as $$
-  select p_area in (select public.area_cakupan())
+  select coalesce((
+    p_area in (select public.area_cakupan())
+  ), false)
 $$;
 
 -- Lihat toko: atasan sesuai cakupan, PC tokonya
 create or replace function public.can_view_store(p_store int) returns boolean
 language sql stable security definer set search_path = public as $$
-  select case when public.my_role() = 'pc' then p_store = public.my_store_id()
+  select coalesce((
+    case when public.my_role() = 'pc' then p_store = public.my_store_id()
               else public.in_cakupan(public.store_area(p_store)) end
+  ), false)
 $$;
 
 -- Kelola toko (target, offday, PC, koreksi data): MT, Trainer, Sales sesuai cakupan
 create or replace function public.can_manage_store(p_store int) returns boolean
 language sql stable security definer set search_path = public as $$
-  select public.is_atasan() and public.in_cakupan(public.store_area(p_store))
+  select coalesce((
+    public.is_atasan() and public.in_cakupan(public.store_area(p_store))
+  ), false)
 $$;
 
 -- Lihat data pribadi PC: PC itu sendiri, atasan sesuai cakupan
 create or replace function public.can_view_pc(p_pc uuid) returns boolean
 language sql stable security definer set search_path = public as $$
-  select p_pc = public.my_profile_id() or (public.is_atasan() and public.can_view_store(public.pc_store(p_pc)))
+  select coalesce((
+    p_pc = public.my_profile_id() or (public.is_atasan() and public.can_view_store(public.pc_store(p_pc)))
+  ), false)
 $$;
 
 -- PC masih dalam jam input hari ini (sebelum 22.30 WIB)
@@ -463,38 +490,45 @@ language sql stable as $$
   select p_tanggal = public.today_wib() and public.time_wib() < time '22:30'
 $$;
 
--- Stok toko: PC tokonya hari ini sebelum 22.30; atasan cakupan untuk tanggal s.d. hari ini
+-- Stok toko: PC tokonya (tanpa batas jam); atasan cakupan. Tanggal s.d. hari ini.
 create or replace function public.can_write_daily(p_store int, p_tanggal date) returns boolean
 language sql stable security definer set search_path = public as $$
-  select p_tanggal <= public.today_wib() and (
-           (public.my_role() = 'pc' and p_store = public.my_store_id() and public.pc_jam_buka(p_tanggal))
+  select coalesce((
+    p_tanggal <= public.today_wib() and (
+           (public.my_role() = 'pc' and p_store = public.my_store_id())
         or public.can_manage_store(p_store))
+  ), false)
 $$;
 
--- Data harian PC (cek limit, tanda nihil): PC sendiri hari ini sebelum 22.30; atasan cakupan
+-- Data harian PC (cek limit, tanda nihil): PC sendiri tanggal berapa pun s.d. hari ini; atasan cakupan
 create or replace function public.can_write_pc(p_pc uuid, p_tanggal date) returns boolean
 language sql stable security definer set search_path = public as $$
-  select p_tanggal <= public.today_wib() and (
-           (p_pc = public.my_profile_id() and public.my_role() = 'pc' and public.pc_jam_buka(p_tanggal))
+  select coalesce((
+    p_tanggal <= public.today_wib() and (
+           (p_pc = public.my_profile_id() and public.my_role() = 'pc')
         or public.can_manage_store(public.pc_store(p_pc)))
+  ), false)
 $$;
 
--- Penjualan: PC miliknya sendiri di bulan berjalan; atasan cakupan (koreksi) s.d. hari ini
+-- Penjualan: PC miliknya sendiri tanggal berapa pun s.d. hari ini; atasan cakupan (koreksi)
 create or replace function public.can_write_sales(p_store int, p_pc uuid, p_tanggal date) returns boolean
 language sql stable security definer set search_path = public as $$
-  select p_tanggal <= public.today_wib() and (
-           (public.my_role() = 'pc' and p_pc = public.my_profile_id() and p_store = public.my_store_id()
-              and p_tanggal >= date_trunc('month', public.today_wib()::timestamp)::date)
+  select coalesce((
+    p_tanggal <= public.today_wib() and (
+           (public.my_role() = 'pc' and p_pc = public.my_profile_id() and p_store = public.my_store_id())
         or public.can_manage_store(p_store))
+  ), false)
 $$;
 
 -- MS Allbrand: PC tokonya tgl 1 s.d. hari ini di bulan berjalan; atasan cakupan s.d. hari ini
 create or replace function public.can_write_ms(p_store int, p_tanggal date) returns boolean
 language sql stable security definer set search_path = public as $$
-  select p_tanggal <= public.today_wib() and (
+  select coalesce((
+    p_tanggal <= public.today_wib() and (
            (public.my_role() = 'pc' and p_store = public.my_store_id()
               and date_trunc('month', p_tanggal) = date_trunc('month', public.today_wib()::timestamp))
         or public.can_manage_store(p_store))
+  ), false)
 $$;
 
 create or replace function public.segmen_harga(p_harga bigint) returns text
@@ -668,7 +702,7 @@ end $$;
 do $$
 declare t text;
 begin
-  foreach t in array array['products', 'store_targets', 'pc_targets'] loop
+  foreach t in array array['products', 'store_targets', 'pc_targets', 'pc_target_harian'] loop
     execute format('drop trigger if exists trg_pengubah on public.%I', t);
     execute format('create trigger trg_pengubah before insert or update on public.%I for each row execute function public.set_pengubah()', t);
   end loop;
@@ -686,6 +720,7 @@ begin
     when 'products' then coalesce(j->>'area_id', '') || '|' || coalesce(j->>'kode', '')
     when 'store_targets' then (j->>'store_id') || '|' || (j->>'bulan') || '|' || (j->>'jenis')
     when 'pc_targets' then (j->>'pc_id') || '|' || (j->>'bulan') || '|' || (j->>'jenis')
+    when 'pc_target_harian' then (j->>'pc_id') || '|' || (j->>'tanggal')
     when 'insentif_produk' then (j->>'trainer_id') || '|' || (j->>'bulan') || '|' || (j->>'kode')
     when 'insentif_lain' then (j->>'trainer_id') || '|' || (j->>'bulan') || '|' || (j->>'kode')
     when 'kpi_gaji' then (j->>'trainer_id') || '|' || (j->>'bulan')
@@ -703,7 +738,7 @@ end $$;
 do $$
 declare t text;
 begin
-  foreach t in array array['products', 'store_targets', 'pc_targets', 'kpi_gaji', 'kpi_tier', 'kpi_potongan',
+  foreach t in array array['products', 'store_targets', 'pc_targets', 'pc_target_harian', 'kpi_gaji', 'kpi_tier', 'kpi_potongan',
                            'kpi_aturan', 'insentif_produk', 'insentif_lain'] loop
     execute format('drop trigger if exists trg_audit on public.%I', t);
     execute format('create trigger trg_audit after insert or update or delete on public.%I for each row execute function public.audit_change()', t);
@@ -813,14 +848,16 @@ language sql stable security definer set search_path = public as $$
 $$;
 
 -- Salin semua aturan Trainer (akun sendiri) dari bulan p_dari ke bulan p_ke
-create or replace function public.salin_kpi(p_dari date, p_ke date) returns void
+drop function if exists public.salin_kpi(date, date);
+create or replace function public.salin_kpi(p_dari date, p_ke date, p_trainer uuid default null) returns void
 language plpgsql security definer set search_path = public as $$
 declare
-  t uuid := public.my_profile_id();
+  t uuid := case when public.is_mt() then coalesce(p_trainer, public.my_profile_id()) else public.my_profile_id() end;
   d date := date_trunc('month', p_dari)::date;
   k date := date_trunc('month', p_ke)::date;
 begin
-  if public.my_role() <> 'trainer' then raise exception 'KPI hanya bisa diubah oleh Trainer'; end if;
+  if not coalesce(public.is_mt() or public.my_role() = 'trainer', false) then raise exception 'KPI hanya bisa diubah oleh Trainer atau MT'; end if;
+  if not exists (select 1 from public.profiles where id = t and role = 'trainer') then raise exception 'Pilih Trainer'; end if;
   if d = k then return; end if;
   if not exists (select 1 from public.kpi_gaji where trainer_id = t and bulan = d) then
     raise exception 'Bulan sumber belum punya aturan';
@@ -1023,7 +1060,7 @@ declare t text;
 begin
   foreach t in array array['profiles', 'areas', 'stores', 'trainer_sales', 'produk_master', 'products', 'competitor_brands',
                            'sales', 'checkins', 'competitor_sales', 'competitor_sales_detail',
-                           'leasing_checks', 'daily_reports', 'pc_day_status', 'store_targets', 'pc_targets',
+                           'leasing_checks', 'daily_reports', 'pc_day_status', 'store_targets', 'pc_targets', 'pc_target_harian',
                            'audit_log', 'login_log', 'kpi_gaji', 'kpi_tier', 'kpi_potongan', 'kpi_aturan',
                            'insentif_produk', 'insentif_lain'] loop
     execute format('alter table public.%I enable row level security', t);
@@ -1109,6 +1146,11 @@ create policy pc_targets_select on public.pc_targets for select to authenticated
 drop policy if exists pc_targets_manage on public.pc_targets;
 create policy pc_targets_manage on public.pc_targets for all to authenticated
   using (public.can_manage_store(public.pc_store(pc_id))) with check (public.can_manage_store(public.pc_store(pc_id)));
+drop policy if exists pc_target_harian_select on public.pc_target_harian;
+create policy pc_target_harian_select on public.pc_target_harian for select to authenticated using (public.can_view_pc(pc_id));
+drop policy if exists pc_target_harian_manage on public.pc_target_harian;
+create policy pc_target_harian_manage on public.pc_target_harian for all to authenticated
+  using (public.can_manage_store(public.pc_store(pc_id))) with check (public.can_manage_store(public.pc_store(pc_id)));
 
 -- Riwayat perubahan: MT, Trainer, Sales
 drop policy if exists audit_log_read on public.audit_log;
@@ -1117,7 +1159,7 @@ create policy audit_log_read on public.audit_log for select to authenticated usi
 drop policy if exists login_log_select on public.login_log;
 create policy login_log_select on public.login_log for select to authenticated using (public.can_view_pc(profile_id) or public.is_mt());
 
--- KPI: semua akun boleh melihat; ubah HANYA Trainer untuk wilayahnya sendiri
+-- KPI: semua akun boleh melihat; ubah oleh Trainer untuk wilayahnya sendiri dan MT untuk semua wilayah
 do $$
 declare t text;
 begin
@@ -1125,7 +1167,7 @@ begin
     execute format('drop policy if exists %I on public.%I', t || '_read', t);
     execute format('create policy %I on public.%I for select to authenticated using (true)', t || '_read', t);
     execute format('drop policy if exists %I on public.%I', t || '_trainer', t);
-    execute format('create policy %I on public.%I for all to authenticated using (public.my_role() = ''trainer'' and trainer_id = public.my_profile_id()) with check (public.my_role() = ''trainer'' and trainer_id = public.my_profile_id())', t || '_trainer', t);
+    execute format('create policy %I on public.%I for all to authenticated using (public.is_mt() or (public.my_role() = ''trainer'' and trainer_id = public.my_profile_id())) with check (public.is_mt() or (public.my_role() = ''trainer'' and trainer_id = public.my_profile_id()))', t || '_trainer', t);
   end loop;
 end $$;
 
@@ -1232,11 +1274,13 @@ end $$;
 --   MT: semua akun selain MT. Trainer: Sales yang dipegang + PC di wilayahnya. Sales: PC di areanya.
 create or replace function public.boleh_atur_akun(v public.profiles) returns boolean
 language sql stable security definer set search_path = public as $$
-  select v.role <> 'mt' and (
+  select coalesce((
+    v.role <> 'mt' and (
        public.is_mt()
     or (v.role = 'pc' and public.can_manage_store(v.store_id))
     or (v.role = 'sales' and public.my_role() = 'trainer'
         and exists (select 1 from public.trainer_sales where sales_id = v.id and trainer_id = public.my_profile_id())))
+  ), false)
 $$;
 
 -- Atur password baru untuk akun lain (yang sudah pernah login). Password lama tidak bisa dilihat siapa pun
@@ -1447,7 +1491,7 @@ declare
   v_kurang text[];
   r public.daily_reports;
 begin
-  if public.my_role() <> 'pc' then raise exception 'Laporan dikirim oleh PC'; end if;
+  if coalesce(public.my_role(), '') <> 'pc' then raise exception 'Laporan dikirim oleh PC'; end if;
   if not public.pc_jam_buka(p_tanggal) then
     raise exception 'Laporan hanya bisa dikirim hari ini sebelum 22.30 WIB.';
   end if;
@@ -1464,8 +1508,8 @@ end $$;
 
 -- Simpan stok toko hari ini.
 --   Stok awal (pertama kali): p_items = [{"product_id": 1, "qty": 5}, ...] = hitungan fisik.
---   PC sesudahnya HANYA MENAMBAH barang masuk: p_items = [{"product_id": 1, "tambah": 3}, ...].
---   MT / Trainer / Sales: koreksi angka stok ("qty" = angka benar).
+--   Sesudahnya: barang masuk p_items = [{"product_id": 1, "tambah": 3}, ...] (ditambahkan ke stok),
+--   atau koreksi p_items = [{"product_id": 1, "qty": 4}, ...] (angka stok yang benar). PC, MT, Trainer, Sales.
 -- Hanya produk yang berubah dicatat di riwayat.
 create or replace function public.simpan_stok(p_store int, p_items jsonb) returns jsonb
 language plpgsql security definer set search_path = public as $$
@@ -1473,18 +1517,17 @@ declare
   v_today date := public.today_wib();
   v_awal boolean;
   v_area int := public.store_area(p_store);
-  v_tambah boolean;
   r record;
   n int := 0;
 begin
   if not public.can_write_daily(p_store, v_today) then
-    raise exception 'Tidak diizinkan. PC hanya bisa update stok tokonya hari ini sebelum 22.30 WIB.';
+    raise exception 'Tidak diizinkan. Stok hanya bisa diubah oleh PC tokonya atau atasan wilayahnya.';
   end if;
   select stok_awal_pada is null into v_awal from public.stores where id = p_store;
-  v_tambah := not v_awal and public.my_role() = 'pc';
   for r in
     select p.id as product_id,
-           case when v_tambah
+           not v_awal and d ? 'tambah' as tambah,
+           case when not v_awal and d ? 'tambah'
                 then coalesce(s.qty, 0) + greatest(0, least(9999, coalesce((d->>'tambah')::int, 0)))
                 else greatest(-99999, least(99999, coalesce((d->>'qty')::int, coalesce(s.qty, 0)))) end as qty,
            coalesce(s.qty, 0) as lama
@@ -1493,7 +1536,7 @@ begin
       left join public.stok s on s.store_id = p_store and s.product_id = p.id
   loop
     if r.qty <> r.lama then
-      perform public.ubah_stok(p_store, r.product_id, r.qty - r.lama, v_today, case when v_awal then 'awal' when v_tambah then 'masuk' else 'koreksi' end, null);
+      perform public.ubah_stok(p_store, r.product_id, r.qty - r.lama, v_today, case when v_awal then 'awal' when r.tambah then 'masuk' else 'koreksi' end, null);
       n := n + 1;
     end if;
   end loop;
@@ -1581,6 +1624,9 @@ begin
                  where store_id = v_store and role = 'pc' and aktif and id <> p_pc),
     'libur', (select status from public.pc_day_status where pc_id = p_pc and tanggal = p_tanggal),
     'offday_sisa', (select count(*) from public.pc_day_status where pc_id = p_pc and tanggal >= p_tanggal and tanggal <= v_akhir),
+    'target_harian', (select jsonb_strip_nulls(jsonb_build_object('unit', t.unit, 'value', t.value, 'fokus', t.fokus, 'iot', t.iot,
+                              'oleh', (select nama from public.profiles where id = t.updated_by)))
+                        from public.pc_target_harian t where t.pc_id = p_pc and t.tanggal = p_tanggal),
     'hari_akhir', extract(day from v_akhir)::int,
     'hari', jsonb_build_object(
       'unit', coalesce((select sum(qty) from h where tipe = 'HP'), 0),
@@ -1803,6 +1849,12 @@ begin
           'target_unit', (select nilai from public.pc_targets where pc_id = pc.id and bulan = v_bulan and jenis = 'unit'),
           'target_value', (select nilai from public.pc_targets where pc_id = pc.id and bulan = v_bulan and jenis = 'value'),
           'laporan_pada', (select dikirim_pada from public.daily_reports d where d.pc_id = pc.id and d.tanggal = p_tanggal),
+          -- Keaktifan memakai aplikasi bulan ini: jumlah hari PC kirim laporan / input penjualan / tandai NOSELL
+          'hari_aktif', (select count(distinct z.tgl) from (
+              select d.tanggal as tgl from public.daily_reports d where d.pc_id = pc.id and d.tanggal between v_bulan and p_tanggal
+              union select s.tanggal from s where s.pc_id = pc.id
+              union select c.tanggal from public.checkins c where c.pc_id = pc.id and c.tanggal between v_bulan and p_tanggal) z),
+          'target_iot', (select nilai from public.pc_targets where pc_id = pc.id and bulan = v_bulan and jenis = 'iot'),
           'last_seen', pp.last_seen, 'logged_in', pp.logged_in, 'sudah_daftar', pp.auth_uid is not null) as x
           from pc join public.stores st on st.id = pc.store_id join public.profiles pp on pp.id = pc.id) y)
   ) into r;
@@ -2115,6 +2167,7 @@ begin
   delete from public.stok_update where tanggal < v_batas;               get diagnostics n = row_count; r := r || jsonb_build_object('cek_stok', n);
   delete from public.store_targets where bulan < v_bulan;               get diagnostics n = row_count; r := r || jsonb_build_object('target_toko', n);
   delete from public.pc_targets where bulan < v_bulan;                  get diagnostics n = row_count; r := r || jsonb_build_object('target_pc', n);
+  delete from public.pc_target_harian where tanggal < v_batas;          get diagnostics n = row_count; r := r || jsonb_build_object('target_harian', n);
   delete from public.login_log where waktu < now() - interval '365 days'; get diagnostics n = row_count; r := r || jsonb_build_object('riwayat_login', n);
   delete from public.audit_log where waktu < now() - interval '365 days'; get diagnostics n = row_count; r := r || jsonb_build_object('riwayat_perubahan', n);
   delete from public.bersih_log where waktu < now() - interval '365 days';
@@ -2150,7 +2203,7 @@ declare
 begin
   select * into v from public.profiles where id = p_pc;
   if v.id is null or v.role <> 'pc' then raise exception 'Akun PC tidak ditemukan'; end if;
-  if not (public.is_mt() or (public.my_role() = 'trainer' and public.can_manage_store(v.store_id))) then
+  if not coalesce(public.is_mt() or (public.my_role() = 'trainer' and public.can_manage_store(v.store_id)), false) then
     raise exception 'Hapus permanen hanya oleh Manajer Trainer atau Trainer wilayahnya';
   end if;
   perform set_config('lka.bersih', '1', true);
@@ -2161,6 +2214,7 @@ begin
   delete from public.daily_reports where pc_id = p_pc;
   delete from public.pc_day_status where pc_id = p_pc;
   delete from public.pc_targets where pc_id = p_pc;
+  delete from public.pc_target_harian where pc_id = p_pc;
   delete from public.login_log where profile_id = p_pc;
   update public.stok_mutasi set oleh = null where oleh = p_pc;
   update public.stok_update set oleh = null where oleh = p_pc;

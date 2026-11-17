@@ -60,10 +60,28 @@ class _OffdayScreenState extends State<OffdayScreen> {
     if (mounted) setState(() => _loading = false);
   }
 
+  /// Ketuk kotak: pilih langsung Hadir / Offday / Izin / Sakit.
   Future<void> _cycle(String pcId, DateTime d) async {
     final key = '$pcId|${ymd(d)}';
     final now = _status[key];
-    final next = switch (now) { null => 'offday', 'offday' => 'izin', 'izin' => 'sakit', _ => null };
+    final pilih = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(title: Text(hariTgl(d), style: const TextStyle(fontWeight: FontWeight.bold))),
+          for (final o in const [('hadir', 'Hadir (kerja)', Icons.work), ('offday', 'Offday', Icons.beach_access),
+                                 ('izin', 'Izin', Icons.event_busy), ('sakit', 'Sakit', Icons.sick)])
+            ListTile(
+              leading: Icon(o.$3),
+              title: Text(o.$2),
+              trailing: (now ?? 'hadir') == o.$1 ? const Icon(Icons.check) : null,
+              onTap: () => Navigator.pop(ctx, o.$1),
+            ),
+        ]),
+      ),
+    );
+    if (pilih == null || pilih == (now ?? 'hadir')) return;
+    final next = pilih == 'hadir' ? null : pilih;
     setState(() {
       if (next == null) {
         _status.remove(key);
@@ -156,7 +174,7 @@ class _OffdayScreenState extends State<OffdayScreen> {
                       child: AreaDropdown(
                           areas: _areas, value: _area, bolehSemua: true, onChanged: (v) => setState(() => _area = v)),
                     ),
-                  const InfoBanner('Ketuk kotak: kosong (kerja) → Offday → Izin → Sakit → kosong. '
+                  const InfoBanner('Ketuk kotak untuk memilih Hadir, Offday, Izin, atau Sakit. '
                       'Hari offday/izin/sakit tidak wajib lapor dan tidak dihitung hari kerja, jadi target harian PC '
                       'dibagi ke hari kerja yang tersisa.'),
                   Card(

@@ -99,7 +99,7 @@ class HariPcViewState extends State<HariPcView> {
   Future<void> _kirimDanBagikan() async {
     final ok = await confirmDialog(context, 'Kirim laporan?',
         'Laporan ${t.pcNama} ${tglPendek(t.tanggal)} ditandai terkirim, lalu gambar laporan dibuka untuk dibagikan '
-        'ke grup WhatsApp. Data masih bisa dikoreksi sampai $batasLaporanText WIB.',
+        'ke grup Feishu / Lark. Data tetap bisa dikoreksi kapan saja.',
         yes: 'Kirim');
     if (!ok) return;
     setState(() => _sending = true);
@@ -112,6 +112,16 @@ class HariPcViewState extends State<HariPcView> {
       if (mounted) showErr(context, e);
     }
     if (mounted) setState(() => _sending = false);
+  }
+
+  /// Atasan mengatur target harian PC untuk tanggal ini (kosong = hitungan otomatis).
+  Future<void> _aturTargetHarian() async {
+    final ok = await aturTargetHarianDialog(context, pcId: t.pcId, pcNama: t.pcNama, tanggal: t.tanggal,
+        awal: _r['target_harian'] == null ? const {} : asMap(_r['target_harian']));
+    if (ok) {
+      await load();
+      widget.onChanged?.call();
+    }
   }
 
   @override
@@ -140,7 +150,14 @@ class HariPcViewState extends State<HariPcView> {
         if (_laporan) ..._bagianLaporan(me),
         if (_beranda) ...[
           if (widget.bagian == BagianPc.semua) const SectionHeader('Pencapaian'),
-          TargetHarianCard(bulan: bulan, target: target, hari: hari, hk: hk),
+          TargetHarianCard(
+            bulan: bulan,
+            target: target,
+            hari: hari,
+            hk: hk,
+            manual: _r['target_harian'] == null ? null : asMap(_r['target_harian']),
+            onEdit: me.isPc ? null : _aturTargetHarian,
+          ),
           KalenderPenjualan(
             key: ValueKey('kal-${t.pcId}-$_rev'),
             selected: t.tanggal,
@@ -167,8 +184,9 @@ class HariPcViewState extends State<HariPcView> {
             onTapHp: () => _open(PenjualanBulanScreen(toko: t, tipe: 'HP')),
             onTapIot: () => _open(PenjualanBulanScreen(toko: t, tipe: 'IOT')),
           ),
-          InsentifHariCard(key: ValueKey('ins-${t.pcId}-${t.tgl}-$_rev'), pcId: t.pcId, tanggal: t.tanggal),
-          EstimasiGajiCard(key: ValueKey('gaji-${t.pcId}-${t.tgl}-$_rev'), pcId: t.pcId, tanggal: t.tanggal, pcNama: t.pcNama),
+          // Insentif & estimasi gaji hanya di akun PC
+          if (me.isPc) InsentifHariCard(key: ValueKey('ins-${t.pcId}-${t.tgl}-$_rev'), pcId: t.pcId, tanggal: t.tanggal),
+          if (me.isPc) EstimasiGajiCard(key: ValueKey('gaji-${t.pcId}-${t.tgl}-$_rev'), pcId: t.pcId, tanggal: t.tanggal, pcNama: t.pcNama),
           KontribusiTipe(key: ValueKey('kt-${t.pcId}-${t.tgl}-$_rev'), filter: Cakupan(pcId: t.pcId), tanggal: t.tanggal),
           if (!me.isPc)
             KontribusiKategori(key: ValueKey('kk-${t.pcId}-${t.tgl}-$_rev'), filter: Cakupan(pcId: t.pcId), tanggal: t.tanggal),
@@ -186,7 +204,7 @@ class HariPcViewState extends State<HariPcView> {
     final tokoUnit = toNum(hari['toko_unit']);
     final komp = toNum(hari['kompetitor']);
     final pcLain = (_r['pc_lain'] as List?)?.map((e) => '$e').toList() ?? const <String>[];
-    final bisaKirim = laporan == null && me.isPc && t.milikSaya && t.bolehIsiHarian;
+    final bisaKirim = laporan == null && t.bolehKirimLaporan;
     return [
       _statusLaporan(laporan, kurang),
       if (widget.bagian == BagianPc.semua) const SectionHeader('Laporan harian'),
@@ -224,7 +242,7 @@ class HariPcViewState extends State<HariPcView> {
       FilledButton.icon(
         onPressed: _sending ? null : (bisaKirim ? _kirimDanBagikan : () => _open(LaporanScreen(pc: t))),
         icon: busyIcon(_sending, bisaKirim ? Icons.send : Icons.share),
-        label: Text(bisaKirim ? 'Kirim laporan & bagikan gambar' : 'Bagikan gambar laporan'),
+        label: Text(bisaKirim ? 'Kirim laporan & bagikan ke Feishu/Lark' : 'Bagikan laporan ke Feishu/Lark'),
         style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
       ),
       const SizedBox(height: 8),

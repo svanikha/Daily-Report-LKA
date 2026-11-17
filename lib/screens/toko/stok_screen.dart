@@ -34,8 +34,20 @@ class _StokScreenState extends State<StokScreen> {
 
   PcHari get t => widget.toko;
 
-  /// PC setelah stok awal: hanya menambah barang masuk (angka di kolom = jumlah masuk).
-  bool get _modeTambah => (Session.current?.isPc ?? false) && _stokAwal != null;
+  /// PC setelah stok awal memilih: Barang masuk (angka = jumlah masuk) atau Edit stok (angka = stok benar).
+  bool _edit = false;
+  bool get _pc => Session.current?.isPc ?? false;
+  bool get _modeTambah => _pc && _stokAwal != null && !_edit;
+
+  void _gantiMode(bool edit) {
+    setState(() {
+      _edit = edit;
+      for (final p in _products) {
+        final id = toNum(p['id']).toInt();
+        _c[id]?.text = _modeTambah ? '0' : '${_sistem[id] ?? 0}';
+      }
+    });
+  }
 
   /// Stok yang akan tersimpan untuk satu produk.
   int _stokAkhir(int id) => _modeTambah ? (_sistem[id] ?? 0) + _val(id) : _val(id);
@@ -194,16 +206,29 @@ class _StokScreenState extends State<StokScreen> {
                       icon: Icons.flag,
                       color: Colors.deepOrange,
                     )
-                  else
+                  else ...[
+                    if (_pc && boleh)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 8),
+                        child: SegmentedButton<bool>(
+                          segments: const [
+                            ButtonSegment(value: false, label: Text('Barang masuk'), icon: Icon(Icons.add_box)),
+                            ButtonSegment(value: true, label: Text('Edit stok'), icon: Icon(Icons.edit)),
+                          ],
+                          selected: {_edit},
+                          onSelectionChanged: (v) => _gantiMode(v.first),
+                        ),
+                      ),
                     InfoBanner(
                       _modeTambah
                           ? 'Isi jumlah BARANG MASUK hari ini (0 jika tidak ada), lalu simpan. Stok terkini sudah '
-                              'otomatis dipotong penjualan. Jika stok tidak sesuai fisik, minta Sales/Trainer mengoreksi.'
+                              'otomatis dipotong penjualan. Jika stok tidak sesuai fisik, pilih Edit stok.'
                           : 'Angka = stok terkini (sudah dipotong penjualan). Koreksi yang berbeda dengan fisik, lalu simpan.'
                       '${_cekHariIni == null ? '' : '\nSudah dicek hari ini pukul ${jamMenit(_cekHariIni!)} WIB.'}',
                       icon: _cekHariIni == null ? Icons.inventory_2 : Icons.check_circle,
                       color: _cekHariIni == null ? Colors.blueGrey : Colors.green.shade700,
                     ),
+                  ],
                   if (_sistem.values.any((v) => v < 0))
                     InfoBanner(
                       'Ada stok minus (terjual sebelum barang masuk diinput): '

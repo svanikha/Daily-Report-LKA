@@ -22,7 +22,24 @@ class _CekLimitScreenState extends State<CekLimitScreen> {
   bool _nihil = false;
   bool _changed = false;
 
-  PcHari get t => widget.pc;
+  late PcHari _t = widget.pc;
+  PcHari get t => _t;
+
+  /// Pilih tanggal lain (PC & atasan bisa mengubah cek limit tanggal berapa pun s.d. hari ini).
+  Future<void> _pilihTanggal() async {
+    final d = await showDatePicker(
+      context: context,
+      initialDate: t.tanggal,
+      firstDate: DateTime(2026, 1, 1),
+      lastDate: wibToday(),
+    );
+    if (d == null) return;
+    setState(() {
+      _t = t.salin(tanggal: d);
+      _rows = [];
+    });
+    _load();
+  }
 
   @override
   void initState() {
@@ -101,6 +118,9 @@ class _CekLimitScreenState extends State<CekLimitScreen> {
             const Text('Cek limit leasing'),
             Text('${t.pcNama} · ${tglPendek(t.tanggal)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal)),
           ]),
+          actions: [
+            IconButton(onPressed: _pilihTanggal, icon: const Icon(Icons.calendar_month), tooltip: 'Pilih tanggal'),
+          ],
         ),
         bottomNavigationBar: !boleh
             ? null
@@ -121,7 +141,7 @@ class _CekLimitScreenState extends State<CekLimitScreen> {
                 ? ErrorRetry(error: _error!, onRetry: _load)
                 : ListView(padding: const EdgeInsets.all(12), children: [
                     if (!boleh) InfoBanner(t.alasanTerkunci, icon: Icons.lock_outline),
-                    InfoBanner('Hari ini ${_rows.length} pengajuan · $approve approve · ${_rows.length - approve} reject'),
+                    InfoBanner('${t.hariIni ? 'Hari ini' : tglPendek(t.tanggal)} ${_rows.length} pengajuan · $approve approve · ${_rows.length - approve} reject'),
                     if (_rows.isEmpty)
                       Card(
                         child: SwitchListTile(

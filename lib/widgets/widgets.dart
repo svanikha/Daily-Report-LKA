@@ -4,7 +4,7 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 String errMsg(Object e) {
   if (e is PostgrestException) {
     if (e.message.contains('row-level security')) {
-      return 'Tidak diizinkan. PC hanya bisa input hari ini sebelum 22.30 WIB; atasan hanya untuk toko di cakupannya.';
+      return 'Tidak diizinkan. PC hanya bisa mengubah datanya sendiri (s.d. hari ini); atasan hanya untuk toko di cakupannya.';
     }
     return e.message;
   }
