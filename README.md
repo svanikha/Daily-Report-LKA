@@ -58,7 +58,8 @@ lalu **Kirim laporan** sebelum **22.30 WIB**.
 
 - Commit berisi `[tes]` → update otomatis **hanya untuk akun MT** (uji dulu).
 - Commit tanpa `[tes]` → Trainer & Sales. Tambahkan `[pc]` → juga ke semua PC.
-- APK lama dihapus otomatis (5 terbaru per saluran disimpan). Flutter dikunci di 3.47.9.
+- APK diunduh dari GitHub Releases repo publik `daily-report-lka-apk` (tidak memakai kuota egress Supabase).
+  Butuh secret `APK_REPO_TOKEN`. Tanpa token, APK cadangan disimpan di Supabase. Flutter dikunci di 3.47.9.
 
 ## Hak akses ringkas
 

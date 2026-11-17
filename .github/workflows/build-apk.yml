@@ -164,6 +164,9 @@ jobs:
           SB_URL: ${{ vars.SUPABASE_URL }}
           CH: ${{ github.ref == 'refs/heads/main' && 'rilis' || 'uji' }}
           N: ${{ github.run_number }}
+          # Repo GitHub PUBLIK khusus APK + token (fine-grained, Contents: read & write ke repo itu)
+          APK_TOKEN: ${{ secrets.APK_REPO_TOKEN }}
+          APK_REPO: ${{ vars.APK_REPO || 'svanikha/daily-report-lka-apk' }}
         run: |
           if [ -z "$SB_KEY" ] || [ -z "$SB_URL" ]; then echo "SUPABASE_SECRET_KEY / SUPABASE_URL belum diisi, langkah ini dilewati"; exit 0; fi
           SB_KEY="$(printf '%s' "$SB_KEY" | tr -d '[:space:]')"
@@ -173,11 +176,38 @@ jobs:
           AUTH=(-H "apikey: $SB_KEY")
           case "$SB_KEY" in eyJ*) AUTH+=(-H "Authorization: Bearer $SB_KEY");; esac
           ls -lh "$F" | tee -a ci-log.txt
-          curl -sS --fail-with-body -X POST "$BASE/apk/$CH/$F" "${AUTH[@]}" \
-            -H "x-upsert: true" -H "Content-Type: application/vnd.android.package-archive" \
-            --data-binary @"$F"
-          jq -n --argjson code "$N" --arg name "1.0.$N" \
-            --arg url "$SB_URL/storage/v1/object/public/apk/$CH/$F" \
+          # APK diunduh dari GitHub Releases repo publik (tidak memakai kuota egress Supabase).
+          # Hanya jika token belum ada / gagal, APK disimpan di Supabase sebagai cadangan.
+          URL=""
+          APK_TOKEN="$(printf '%s' "$APK_TOKEN" | tr -d '[:space:]')"
+          if [ -n "$APK_TOKEN" ] && [ -n "$APK_REPO" ]; then
+            TAG="v1.0.$N"
+            PRE=true; git log -1 --format=%B | grep -qi '\[pc\]' && PRE=false
+            REL="$(curl -sS -X POST "https://api.github.com/repos/$APK_REPO/releases" \
+              -H "Authorization: Bearer $APK_TOKEN" -H "Accept: application/vnd.github+json" \
+              -d "$(jq -n --arg t "$TAG" --argjson p $PRE --arg b "$(git log -1 --format=%s)" \
+                    '{tag_name: $t, name: ("Daily Report LKA " + $t), body: $b, prerelease: $p, make_latest: (if $p then "false" else "true" end)}')")"
+            RID="$(printf '%s' "$REL" | jq -r '.id // empty')"
+            if [ -n "$RID" ] && curl -sS --fail -X POST \
+                 "https://uploads.github.com/repos/$APK_REPO/releases/$RID/assets?name=$F" \
+                 -H "Authorization: Bearer $APK_TOKEN" -H "Content-Type: application/vnd.android.package-archive" \
+                 --data-binary @"$F" > /dev/null; then
+              URL="https://github.com/$APK_REPO/releases/download/$TAG/$F"
+              echo "APK diunggah ke GitHub Releases: $URL" | tee -a ci-log.txt
+            else
+              echo "Gagal unggah ke GitHub Releases, pakai Supabase: $(printf '%s' "$REL" | jq -r '.message // empty')" | tee -a ci-log.txt
+            fi
+          else
+            echo "APK_REPO_TOKEN belum diisi: APK disimpan di Supabase (memakan kuota egress)" | tee -a ci-log.txt
+          fi
+          if [ -z "$URL" ]; then
+            curl -sS --fail-with-body -X POST "$BASE/apk/$CH/$F" "${AUTH[@]}" \
+              -H "x-upsert: true" -H "Content-Type: application/vnd.android.package-archive" \
+              --data-binary @"$F"
+            URL="$SB_URL/storage/v1/object/public/apk/$CH/$F"
+          fi
+          # File penunjuk versi (sekitar 200 byte) tetap di Supabase
+          jq -n --argjson code "$N" --arg name "1.0.$N" --arg url "$URL" \
             '{version_code: $code, version_name: $name, url: $url, catatan: ""}' > latest.json
           cat latest.json
           up() {
