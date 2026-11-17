@@ -201,7 +201,7 @@ class _KalenderPenjualanState extends State<KalenderPenjualan> {
           Text('${d.day}', style: TextStyle(fontSize: 10, color: future ? Colors.grey : fg)),
           if (!future) ...[
             if (off)
-              Text(libur ?? 'OFF', style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Colors.teal))
+              Text(libur, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Colors.teal))
             else if (nosell)
               const Text('NOSELL', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Color(0xFFB71C1C)))
             else
