@@ -149,9 +149,11 @@ class HariPcViewState extends State<HariPcView> {
         _tile(
           icon: Icons.inventory_2,
           title: 'Update stok (per toko)',
-          status: stokUpdate == null
-              ? 'Belum diisi${pcLain.isNotEmpty ? ' · bisa diisi PC lain di toko' : ''}'
-              : 'Diupdate ${jamMenit(stokUpdate)}${pcLain.isNotEmpty ? ' · dipakai bersama ${pcLain.join(', ')}' : ''}',
+          status: _r['stok_awal_pada'] == null
+              ? 'Stok awal belum diisi: hitung stok fisik toko${pcLain.isNotEmpty ? ' (cukup 1 PC di toko)' : ''}'
+              : stokUpdate == null
+                  ? 'Hari ini belum dicek${pcLain.isNotEmpty ? ' · bisa dicek PC lain di toko' : ''}'
+                  : 'Dicek ${jamMenit(stokUpdate)}${pcLain.isNotEmpty ? ' · dipakai bersama ${pcLain.join(', ')}' : ''}',
           ok: stokUpdate != null,
           onTap: () => _open(StokScreen(toko: t)),
         ),

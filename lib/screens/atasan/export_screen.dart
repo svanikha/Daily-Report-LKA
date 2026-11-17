@@ -193,8 +193,17 @@ class _ExportScreenState extends State<ExportScreen> {
         ],
     ]);
 
-    _sheet(x, 'Stok', const ['Tanggal', 'Toko', 'Tipe', 'Series', 'Produk', 'Qty'], [
-      for (final r in asList(d['stok'])) [r['tanggal'], r['toko'], r['tipe'], r['grup'], r['produk'], r['qty']],
+    _sheet(x, 'Stok terkini', const ['Toko', 'Tipe', 'Series', 'Produk', 'Stok', 'Diperbarui'], [
+      for (final r in asList(d['stok'])) [r['toko'], r['tipe'], r['grup'], r['produk'], r['qty'], r['update']],
+    ]);
+
+    const jenisMutasi = {'awal': 'Stok awal', 'koreksi': 'Koreksi / barang masuk', 'jual': 'Terjual', 'batal_jual': 'Batal jual'};
+    _sheet(x, 'Riwayat stok', const ['Tanggal', 'Jam', 'Toko', 'Produk', 'Jenis', 'Perubahan', 'Stok sesudah', 'Oleh'], [
+      for (final r in asList(d['mutasi_stok']))
+        [
+          r['tanggal'], r['jam'], r['toko'], r['produk'], jenisMutasi[r['jenis']] ?? r['jenis'], r['perubahan'],
+          r['sesudah'], r['oleh'],
+        ],
     ]);
 
     const seg = {'lt3': '< 3 jt', '3to6': '3 - 6 jt', 'gt6': '6 jt up'};

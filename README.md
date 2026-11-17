@@ -20,6 +20,10 @@ Manajer Trainer (MT) ── semua area
 | Data | Tingkat |
 | --- | --- |
 | Stok, MS Allbrand | per toko (semua PC di toko melihat angka yang sama) |
+
+**Stok**: PC menghitung stok fisik sekali (stok awal). Sesudahnya setiap penjualan otomatis memotong stok
+toko (edit/hapus ikut menyesuaikan; penjualan bertanggal sebelum stok awal tidak memotong). Setiap hari PC
+cek & koreksi (barang masuk / selisih). Database hanya menyimpan stok terkini + riwayat perubahan, jadi hemat.
 | Penjualan, cek limit, kirim laporan, target, estimasi gaji | per PC |
 | Produk & harga | per area (Sales hanya mengubah areanya) |
 | KPI & insentif | per wilayah Trainer (hanya Trainer yang mengubah) |
@@ -37,6 +41,7 @@ lalu **Kirim laporan** sebelum **22.30 WIB**.
 4. **Authentication → Users → Add user → Create new user** untuk akun MT:
    email `mt@dailyreportlka.app`, password MT, centang **Auto Confirm User**.
    (Nama MT bisa diganti: `update profiles set nama = '...' where email = 'mt@dailyreportlka.app';`)
+   Server yang dibuat sebelum 18 Nov 2026: jalankan juga `supabase/tahap_stok.sql` (stok terkini).
 5. Jalankan `supabase/data_awal.sql` (Trainer, Sales, area, toko, PC), atau isi lewat aplikasi
    (MT → Kelola → Sales, Trainer & area → Toko → PC).
 6. Catat **Project Settings → API**: Project URL dan anon/publishable key; **API Keys**: secret key.

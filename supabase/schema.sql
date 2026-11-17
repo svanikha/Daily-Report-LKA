@@ -145,16 +145,48 @@ create table if not exists public.checkins (
   primary key (pc_id, tanggal, modul)
 );
 
--- Stok per toko (semua PC di toko melihat angka yang sama)
-create table if not exists public.stock_daily (
+-- STOK per toko (semua PC di toko memakai angka yang sama).
+-- Hemat database: hanya stok TERKINI (1 baris per toko per produk) + riwayat perubahan.
+--   1. PC menghitung stok fisik sekali = stok awal (stores.stok_awal_pada).
+--   2. Setiap penjualan sesudahnya otomatis memotong stok (edit/hapus ikut menyesuaikan).
+--      Penjualan bertanggal SEBELUM tanggal stok awal tidak memotong stok.
+--   3. Setiap hari PC cek & koreksi (barang masuk / selisih), lalu simpan.
+alter table public.stores add column if not exists stok_awal_pada timestamptz;
+alter table public.stores add column if not exists stok_awal_tanggal date;
+
+create table if not exists public.stok (
+  store_id int not null references public.stores(id),
+  product_id int not null references public.products(id),
+  qty int not null default 0,                    -- boleh minus (terjual sebelum barang masuk diinput)
+  updated_at timestamptz not null default now(),
+  primary key (store_id, product_id)
+);
+
+-- Riwayat perubahan stok: awal, koreksi (barang masuk / selisih), jual, batal_jual
+create table if not exists public.stok_mutasi (
+  id bigserial primary key,
+  store_id int not null references public.stores(id),
+  product_id int not null references public.products(id),
+  tanggal date not null,
+  jenis text not null check (jenis in ('awal', 'koreksi', 'jual', 'batal_jual')),
+  perubahan int not null,
+  sesudah int not null,
+  sale_id uuid,
+  oleh uuid references public.profiles(id),
+  waktu timestamptz not null default now()
+);
+create index if not exists stok_mutasi_idx on public.stok_mutasi(store_id, tanggal);
+
+-- Tanda "stok sudah dicek hari ini" per toko + total stok saat itu (untuk laporan & export)
+create table if not exists public.stok_update (
   store_id int not null references public.stores(id),
   tanggal date not null,
-  product_id int not null references public.products(id),
-  qty int not null default 0 check (qty >= 0),
-  diinput_oleh uuid references public.profiles(id),
-  waktu_input timestamptz not null default now(),
-  updated_at timestamptz not null default now(),
-  primary key (store_id, tanggal, product_id)
+  pertama timestamptz not null default now(),
+  terakhir timestamptz not null default now(),
+  oleh uuid references public.profiles(id),
+  stok_hp int,
+  stok_iot int,
+  primary key (store_id, tanggal)
 );
 
 -- MS Allbrand per toko: total per brand + rincian per segmen harga
@@ -555,17 +587,55 @@ end $$;
 drop trigger if exists trg_pelaku_leasing on public.leasing_checks;
 create trigger trg_pelaku_leasing before insert on public.leasing_checks for each row execute function public.set_pelaku();
 
--- Stok: jam input pertama tidak berubah saat dikoreksi
-create or replace function public.keep_stock_first_input() returns trigger
-language plpgsql as $$
+-- Stok: penjualan memotong stok toko (hanya setelah stok awal toko disimpan)
+alter table public.sales add column if not exists potong_stok boolean not null default false;
+
+create or replace function public.ubah_stok(p_store int, p_product int, p_ubah int, p_tanggal date, p_jenis text,
+                                            p_sale uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare v_sesudah int;
 begin
-  new.waktu_input := old.waktu_input;
-  new.updated_at := now();
+  if p_product is null or p_ubah = 0 then return; end if;
+  insert into public.stok (store_id, product_id, qty, updated_at) values (p_store, p_product, p_ubah, now())
+  on conflict (store_id, product_id) do update set qty = public.stok.qty + p_ubah, updated_at = now()
+  returning qty into v_sesudah;
+  insert into public.stok_mutasi (store_id, product_id, tanggal, jenis, perubahan, sesudah, sale_id, oleh)
+  values (p_store, p_product, p_tanggal, p_jenis, p_ubah, v_sesudah, p_sale, public.my_profile_id());
+end $$;
+revoke execute on function public.ubah_stok(int, int, int, date, text, uuid) from public, anon, authenticated;
+
+-- Sebelum simpan: tentukan apakah penjualan ini memotong stok
+create or replace function public.tandai_potong_stok() returns trigger
+language plpgsql security definer set search_path = public as $$
+declare v_awal date;
+begin
+  if tg_op = 'UPDATE' and new.tanggal = old.tanggal and new.store_id = old.store_id then
+    new.potong_stok := old.potong_stok;
+    return new;
+  end if;
+  select stok_awal_tanggal into v_awal from public.stores where id = new.store_id;
+  new.potong_stok := v_awal is not null and new.tanggal >= v_awal and new.product_id is not null;
   return new;
 end $$;
-drop trigger if exists trg_stock_keep on public.stock_daily;
-create trigger trg_stock_keep before update on public.stock_daily
-  for each row execute function public.keep_stock_first_input();
+drop trigger if exists trg_tandai_potong_stok on public.sales;
+create trigger trg_tandai_potong_stok before insert or update on public.sales
+  for each row execute function public.tandai_potong_stok();
+
+-- Sesudah simpan: kembalikan potongan lama, terapkan potongan baru
+create or replace function public.stok_dari_penjualan() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  if tg_op in ('UPDATE', 'DELETE') and old.potong_stok then
+    perform public.ubah_stok(old.store_id, old.product_id, old.qty, public.today_wib(), 'batal_jual', old.id);
+  end if;
+  if tg_op in ('INSERT', 'UPDATE') and new.potong_stok then
+    perform public.ubah_stok(new.store_id, new.product_id, -new.qty, public.today_wib(), 'jual', new.id);
+  end if;
+  return null;
+end $$;
+drop trigger if exists trg_stok_dari_penjualan on public.sales;
+create trigger trg_stok_dari_penjualan after insert or update or delete on public.sales
+  for each row execute function public.stok_dari_penjualan();
 
 -- Apple hanya segmen 6 jt up
 create or replace function public.cek_segmen_brand() returns trigger
@@ -949,7 +1019,7 @@ do $$
 declare t text;
 begin
   foreach t in array array['profiles', 'areas', 'stores', 'trainer_sales', 'produk_master', 'products', 'competitor_brands',
-                           'sales', 'checkins', 'stock_daily', 'competitor_sales', 'competitor_sales_detail',
+                           'sales', 'checkins', 'competitor_sales', 'competitor_sales_detail',
                            'leasing_checks', 'daily_reports', 'pc_day_status', 'store_targets', 'pc_targets',
                            'audit_log', 'login_log', 'kpi_gaji', 'kpi_tier', 'kpi_potongan', 'kpi_aturan',
                            'insentif_produk', 'insentif_lain'] loop
@@ -1010,14 +1080,13 @@ create policy daily_reports_select on public.daily_reports for select to authent
 do $$
 declare t text;
 begin
-  foreach t in array array['stock_daily', 'competitor_sales', 'competitor_sales_detail'] loop
+  foreach t in array array['stok', 'stok_mutasi', 'stok_update', 'competitor_sales', 'competitor_sales_detail'] loop
+    execute format('alter table public.%I enable row level security', t);
     execute format('drop policy if exists %I on public.%I', t || '_select', t);
     execute format('create policy %I on public.%I for select to authenticated using (public.can_view_store(store_id))', t || '_select', t);
   end loop;
 end $$;
-drop policy if exists stock_daily_write on public.stock_daily;
-create policy stock_daily_write on public.stock_daily for all to authenticated
-  using (public.can_write_daily(store_id, tanggal)) with check (public.can_write_daily(store_id, tanggal));
+-- Stok hanya ditulis lewat RPC simpan_stok dan trigger penjualan (tanpa policy tulis)
 
 -- Offday / izin
 drop policy if exists pc_day_status_select on public.pc_day_status;
@@ -1327,7 +1396,7 @@ $$;
 create or replace function public.laporan_kurang(p_pc uuid, p_tanggal date) returns text[]
 language sql stable security definer set search_path = public as $$
   select array_remove(array[
-    case when not exists (select 1 from public.stock_daily where store_id = public.pc_store(p_pc) and tanggal = p_tanggal)
+    case when not exists (select 1 from public.stok_update where store_id = public.pc_store(p_pc) and tanggal = p_tanggal)
          then 'Stok' end,
     case when not exists (select 1 from public.sales where pc_id = p_pc and tanggal = p_tanggal)
           and not exists (select 1 from public.checkins where pc_id = p_pc and tanggal = p_tanggal and modul = 'penjualan')
@@ -1361,6 +1430,47 @@ begin
   on conflict (pc_id, tanggal) do update set dikirim_pada = public.daily_reports.dikirim_pada
   returning * into r;
   return to_jsonb(r);
+end $$;
+
+-- Simpan stok toko hari ini: p_items = [{"product_id": 1, "qty": 5}, ...] = angka stok fisik terkini.
+-- Simpan pertama kali = STOK AWAL (penjualan sesudahnya otomatis memotong stok).
+-- Berikutnya = cek & koreksi (barang masuk / selisih); hanya produk yang berubah dicatat di riwayat.
+create or replace function public.simpan_stok(p_store int, p_items jsonb) returns jsonb
+language plpgsql security definer set search_path = public as $$
+declare
+  v_today date := public.today_wib();
+  v_awal boolean;
+  v_area int := public.store_area(p_store);
+  r record;
+  n int := 0;
+begin
+  if not public.can_write_daily(p_store, v_today) then
+    raise exception 'Tidak diizinkan. PC hanya bisa update stok tokonya hari ini sebelum 22.30 WIB.';
+  end if;
+  select stok_awal_pada is null into v_awal from public.stores where id = p_store;
+  for r in
+    select p.id as product_id, greatest(-99999, least(99999, coalesce((d->>'qty')::int, 0))) as qty,
+           coalesce(s.qty, 0) as lama
+      from jsonb_array_elements(coalesce(p_items, '[]'::jsonb)) d
+      join public.products p on p.id = (d->>'product_id')::int and p.area_id = v_area
+      left join public.stok s on s.store_id = p_store and s.product_id = p.id
+  loop
+    if r.qty <> r.lama then
+      perform public.ubah_stok(p_store, r.product_id, r.qty - r.lama, v_today, case when v_awal then 'awal' else 'koreksi' end, null);
+      n := n + 1;
+    end if;
+  end loop;
+  if v_awal then
+    update public.stores set stok_awal_pada = now(), stok_awal_tanggal = v_today where id = p_store;
+  end if;
+  insert into public.stok_update (store_id, tanggal, oleh, stok_hp, stok_iot)
+  select p_store, v_today, public.my_profile_id(),
+         coalesce(sum(s.qty) filter (where p.tipe = 'HP'), 0), coalesce(sum(s.qty) filter (where p.tipe = 'IOT'), 0)
+    from public.stok s join public.products p on p.id = s.product_id
+   where s.store_id = p_store
+  on conflict (store_id, tanggal) do update
+     set terakhir = now(), oleh = excluded.oleh, stok_hp = excluded.stok_hp, stok_iot = excluded.stok_iot;
+  return jsonb_build_object('stok_awal', v_awal, 'berubah', n);
 end $$;
 
 -- Simpan MS Allbrand satu toko satu tanggal (mengganti isian tanggal itu saja)
@@ -1477,12 +1587,13 @@ begin
     'cash_unit', coalesce((select sum(qty) from h where tipe = 'HP' and metode = 'Cash'), 0),
     'kredit_unit', coalesce((select sum(qty) from h where tipe = 'HP' and metode = 'Kredit'), 0),
     'kredit_top', (select cara_bayar from h where metode = 'Kredit' group by cara_bayar order by sum(qty) desc limit 1),
-    'stok_waktu', (select min(waktu_input) from public.stock_daily where store_id = v_store and tanggal = p_tanggal),
-    'stok_update', (select max(updated_at) from public.stock_daily where store_id = v_store and tanggal = p_tanggal),
+    'stok_waktu', (select pertama from public.stok_update where store_id = v_store and tanggal = p_tanggal),
+    'stok_update', (select terakhir from public.stok_update where store_id = v_store and tanggal = p_tanggal),
+    'stok_awal_pada', (select stok_awal_pada from public.stores where id = v_store),
     'stok_kosong_fokus', (select coalesce(jsonb_agg(p.nama order by p.urutan), '[]'::jsonb)
                             from public.products p
-                            left join public.stock_daily sd on sd.product_id = p.id and sd.store_id = v_store and sd.tanggal = p_tanggal
-                           where p.area_id = v_area and p.fokus is not null and p.aktif and coalesce(sd.qty, 0) = 0),
+                            left join public.stok sd on sd.product_id = p.id and sd.store_id = v_store
+                           where p.area_id = v_area and p.fokus is not null and p.aktif and coalesce(sd.qty, 0) <= 0),
     'laporan', (select to_jsonb(x) from public.daily_reports x where x.pc_id = p_pc and x.tanggal = p_tanggal),
     'kurang', to_jsonb(public.laporan_kurang(p_pc, p_tanggal))
   ) into r;
@@ -1568,10 +1679,10 @@ begin
                  where not exists (select 1 from public.daily_reports d where d.pc_id = b.id and d.tanggal = p_tanggal))),
     'stok', jsonb_build_object(
       'total', (select count(*) from toko),
-      'sudah', (select count(distinct sd.store_id) from public.stock_daily sd where sd.tanggal = p_tanggal and sd.store_id in (select id from toko)),
+      'sudah', (select count(*) from public.stok_update sd where sd.tanggal = p_tanggal and sd.store_id in (select id from toko)),
       'toko', (select coalesce(jsonb_agg(jsonb_build_object(
                    'store_id', st.id, 'toko', st.nama, 'area', a.nama, 'area_id', st.area_id,
-                   'update', (select max(sd.updated_at) from public.stock_daily sd where sd.store_id = st.id and sd.tanggal = p_tanggal),
+                   'update', (select sd.terakhir from public.stok_update sd where sd.store_id = st.id and sd.tanggal = p_tanggal),
                    'pc', (select coalesce(jsonb_agg(pp.nama order by pp.nama), '[]'::jsonb) from public.profiles pp
                            where pp.store_id = st.id and pp.role = 'pc' and pp.aktif))
                  order by a.nama, st.nama), '[]'::jsonb)
@@ -1729,12 +1840,9 @@ begin
      where x.store_id in (select id from toko) and x.tanggal between p_dari and p_sampai
      group by 1, 2, 3
   ), stok as (
-    select st.store_id, st.tanggal,
-           sum(st.qty) filter (where p.tipe = 'HP') as stok_hp,
-           sum(st.qty) filter (where p.tipe <> 'HP') as stok_iot
-      from public.stock_daily st join public.products p on p.id = st.product_id
+    select st.store_id, st.tanggal, st.stok_hp, st.stok_iot
+      from public.stok_update st
      where st.store_id in (select id from toko) and st.tanggal between p_dari and p_sampai
-     group by 1, 2
   ), ms as (
     select c.store_id, c.tanggal, sum(c.unit) as brand_lain
       from public.competitor_sales c
@@ -1785,11 +1893,21 @@ begin
         'metode', x.metode, 'cara_bayar', x.cara_bayar) order by x.tanggal, t.nama, p.nama, x.created_at), '[]'::jsonb)
       from public.sales x join toko t on t.id = x.store_id join public.profiles p on p.id = x.pc_id
      where x.tanggal between p_dari and p_sampai),
+    -- Stok terkini per produk (saat export dibuat)
     'stok', (select coalesce(jsonb_agg(jsonb_build_object(
-        'tanggal', st.tanggal, 'toko', t.nama, 'tipe', p.tipe, 'grup', p.grup, 'produk', p.nama, 'qty', st.qty)
-        order by st.tanggal, t.nama, p.tipe, p.urutan), '[]'::jsonb)
-      from public.stock_daily st join toko t on t.id = st.store_id join public.products p on p.id = st.product_id
-     where st.tanggal between p_dari and p_sampai),
+        'toko', t.nama, 'tipe', p.tipe, 'grup', p.grup, 'produk', p.nama, 'qty', st.qty,
+        'update', to_char(st.updated_at at time zone 'Asia/Jakarta', 'YYYY-MM-DD HH24:MI'))
+        order by t.nama, p.tipe, p.urutan), '[]'::jsonb)
+      from public.stok st join toko t on t.id = st.store_id join public.products p on p.id = st.product_id
+     where st.qty <> 0),
+    -- Riwayat perubahan stok dalam rentang tanggal
+    'mutasi_stok', (select coalesce(jsonb_agg(jsonb_build_object(
+        'tanggal', m.tanggal, 'jam', to_char(m.waktu at time zone 'Asia/Jakarta', 'HH24:MI'), 'toko', t.nama,
+        'produk', p.nama, 'jenis', m.jenis, 'perubahan', m.perubahan, 'sesudah', m.sesudah,
+        'oleh', (select nama from public.profiles where id = m.oleh))
+        order by m.waktu), '[]'::jsonb)
+      from public.stok_mutasi m join toko t on t.id = m.store_id join public.products p on p.id = m.product_id
+     where m.tanggal between p_dari and p_sampai),
     'ms_allbrand', (select coalesce(jsonb_agg(jsonb_build_object(
         'tanggal', d.tanggal, 'toko', t.nama, 'brand', b.nama, 'segmen', d.segmen, 'unit', d.unit)
         order by d.tanggal, t.nama, b.urutan, d.segmen), '[]'::jsonb)

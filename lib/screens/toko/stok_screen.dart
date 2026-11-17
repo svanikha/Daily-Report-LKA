@@ -7,7 +7,9 @@ import '../../utils.dart';
 import '../../widgets/kontribusi_tipe.dart';
 import '../../widgets/widgets.dart';
 
-/// Stok per TOKO: semua PC di toko melihat dan mengisi angka yang sama. Angka awal = stok terakhir toko.
+/// Stok TERKINI per toko (dipakai bersama semua PC di toko).
+/// Simpan pertama = stok awal (hitung fisik). Sesudahnya penjualan otomatis memotong stok;
+/// setiap hari PC cek & koreksi (barang masuk / selisih) lalu simpan.
 class StokScreen extends StatefulWidget {
   final PcHari toko;
   const StokScreen({super.key, required this.toko});
@@ -22,8 +24,9 @@ class _StokScreenState extends State<StokScreen> {
   String? _error;
   List<Map<String, dynamic>> _products = [];
   final Map<int, TextEditingController> _c = {};
-  DateTime? _waktuInput; // jam input pertama hari ini (WIB)
-  String? _sumberAwal; // tanggal stok terakhir yang dipakai sebagai angka awal
+  DateTime? _cekHariIni; // jam stok terakhir dicek hari ini (WIB)
+  DateTime? _stokAwal; // kapan stok awal toko disimpan (null = belum)
+  final Map<int, int> _sistem = {}; // stok menurut sistem saat dimuat
   String _q = '';
 
   /// TL / Trainer / PIC: tampilan ringkas per series & tipe (bisa beralih ke mode edit).
@@ -53,46 +56,33 @@ class _StokScreenState extends State<StokScreen> {
     try {
       final db = Session.db;
       final res = await Future.wait<dynamic>([
-        db.from('products').select('id,tipe,nama,grup,fokus').eq('aktif', true).eq('area_id', t.areaId).order('tipe').order('urutan').order('nama'),
-        db.from('stock_daily').select('product_id,qty,waktu_input').eq('store_id', t.storeId).eq('tanggal', t.tgl),
         db
-            .from('stock_daily')
-            .select('tanggal')
-            .eq('store_id', t.storeId)
-            .lt('tanggal', t.tgl)
-            .order('tanggal', ascending: false)
-            .limit(1),
+            .from('products')
+            .select('id,tipe,nama,grup,fokus')
+            .eq('aktif', true)
+            .eq('area_id', t.areaId)
+            .order('tipe')
+            .order('urutan')
+            .order('nama'),
+        db.from('stok').select('product_id,qty').eq('store_id', t.storeId),
+        db.from('stores').select('stok_awal_pada').eq('id', t.storeId).maybeSingle(),
+        db.from('stok_update').select('terakhir').eq('store_id', t.storeId).eq('tanggal', todayStr()).maybeSingle(),
       ]);
       _products = asList(res[0]);
-      final today = asList(res[1]);
-      var qty = <int, int>{};
-      if (today.isNotEmpty) {
-        for (final r in today) {
-          qty[toNum(r['product_id']).toInt()] = toNum(r['qty']).toInt();
-        }
-        final times = today.map((r) => parseWib('${r['waktu_input']}')).toList()..sort();
-        _waktuInput = times.first;
-        _sumberAwal = null;
-      } else {
-        _waktuInput = null;
-        final last = asList(res[2]);
-        if (last.isNotEmpty) {
-          _sumberAwal = '${last.first['tanggal']}';
-          final rows = asList(await db
-              .from('stock_daily')
-              .select('product_id,qty')
-              .eq('store_id', t.storeId)
-              .eq('tanggal', _sumberAwal!));
-          qty = {for (final r in rows) toNum(r['product_id']).toInt(): toNum(r['qty']).toInt()};
-        }
-      }
+      _sistem
+        ..clear()
+        ..addAll({for (final r in asList(res[1])) toNum(r['product_id']).toInt(): toNum(r['qty']).toInt()});
+      final awal = res[2] == null ? null : asMap(res[2])['stok_awal_pada'];
+      _stokAwal = awal == null ? null : parseWib('$awal');
+      final cek = res[3] == null ? null : asMap(res[3])['terakhir'];
+      _cekHariIni = cek == null ? null : parseWib('$cek');
       for (final c in _c.values) {
         c.dispose();
       }
       _c.clear();
       for (final p in _products) {
         final id = toNum(p['id']).toInt();
-        _c[id] = TextEditingController(text: '${qty[id] ?? 0}');
+        _c[id] = TextEditingController(text: '${_sistem[id] ?? 0}');
       }
     } catch (e) {
       _error = errMsg(e);
@@ -103,27 +93,31 @@ class _StokScreenState extends State<StokScreen> {
   int _val(int id) => int.tryParse(_c[id]?.text.trim() ?? '') ?? 0;
 
   void _step(int id, int d) {
-    final v = (_val(id) + d).clamp(0, 9999);
+    final v = (_val(id) + d).clamp(0, 99999);
     setState(() => _c[id]!.text = '$v');
   }
 
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      final me = Session.current!;
-      final rows = [
-        for (final p in _products)
-          {
-            'store_id': t.storeId,
-            'tanggal': t.tgl,
-            'product_id': p['id'],
-            'qty': _val(toNum(p['id']).toInt()),
-            'diinput_oleh': me.id,
-          }
-      ];
-      await Session.db.from('stock_daily').upsert(rows, onConflict: 'store_id,tanggal,product_id');
+      final awal = _stokAwal == null;
+      if (awal) {
+        final ok = await confirmDialog(
+          context,
+          'Simpan sebagai stok awal?',
+          'Pastikan angka sudah sesuai hitungan fisik di toko. Mulai sekarang setiap penjualan otomatis memotong stok. '
+              'Penjualan sebelum hari ini tidak memotong stok.',
+          yes: 'Simpan stok awal',
+        );
+        if (!ok) {
+          if (mounted) setState(() => _saving = false);
+          return;
+        }
+      }
+      final items = [for (final p in _products) {'product_id': p['id'], 'qty': _val(toNum(p['id']).toInt())}];
+      final r = asMap(await Session.db.rpc('simpan_stok', params: {'p_store': t.storeId, 'p_items': items}));
       if (!mounted) return;
-      showMsg(context, 'Stok tersimpan');
+      showMsg(context, awal ? 'Stok awal tersimpan' : 'Stok tersimpan · ${r['berubah'] ?? 0} produk dikoreksi');
       Navigator.pop(context, true);
     } catch (e) {
       if (mounted) showErr(context, e);
@@ -137,7 +131,7 @@ class _StokScreenState extends State<StokScreen> {
     final q = _q.toLowerCase();
     final items = _products.where((p) => q.isEmpty || '${p['nama']} ${p['grup']}'.toLowerCase().contains(q)).toList();
     final kosongFokus = _products
-        .where((p) => p['fokus'] != null && _val(toNum(p['id']).toInt()) == 0)
+        .where((p) => p['fokus'] != null && _val(toNum(p['id']).toInt()) <= 0)
         .map((p) => '${p['nama']}')
         .toList();
     return Scaffold(
@@ -163,7 +157,7 @@ class _StokScreenState extends State<StokScreen> {
                 child: FilledButton.icon(
                   onPressed: _saving ? null : _save,
                   icon: busyIcon(_saving, Icons.save),
-                  label: Text(_waktuInput == null ? 'Simpan stok' : 'Simpan koreksi stok'),
+                  label: Text(_stokAwal == null ? 'Simpan stok awal' : 'Simpan stok hari ini'),
                   style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
                 ),
               ),
@@ -176,17 +170,27 @@ class _StokScreenState extends State<StokScreen> {
                   ? _ringkasView(kosongFokus)
                   : ListView(padding: const EdgeInsets.fromLTRB(12, 12, 12, 24), children: [
                   if (!boleh) InfoBanner(t.alasanTerkunci, icon: Icons.lock_outline),
-                  if (_waktuInput != null)
-                    InfoBanner(
-                      'Stok toko sudah diisi pukul ${jamMenit(_waktuInput!)} WIB. Bisa diupdate lagi kapan saja hari ini.',
-                      icon: Icons.check_circle,
-                      color: Colors.green.shade700,
+                  if (_stokAwal == null)
+                    const InfoBanner(
+                      'STOK AWAL: hitung stok fisik semua produk di toko lalu simpan. Sesudah itu setiap penjualan '
+                      'otomatis memotong stok. Pastikan penjualan tgl 1 s.d. hari ini sudah diinput.',
+                      icon: Icons.flag,
+                      color: Colors.deepOrange,
                     )
                   else
                     InfoBanner(
-                      _sumberAwal == null
-                          ? 'Isi jumlah stok setiap produk.'
-                          : 'Angka awal = stok ${tgl(parseDate(_sumberAwal!))}. Ubah yang berbeda saja.',
+                      'Angka = stok terkini (sudah dipotong penjualan). Tambahkan barang masuk dan koreksi yang '
+                      'berbeda dengan fisik, lalu simpan.'
+                      '${_cekHariIni == null ? '' : '\nSudah dicek hari ini pukul ${jamMenit(_cekHariIni!)} WIB.'}',
+                      icon: _cekHariIni == null ? Icons.inventory_2 : Icons.check_circle,
+                      color: _cekHariIni == null ? Colors.blueGrey : Colors.green.shade700,
+                    ),
+                  if (_sistem.values.any((v) => v < 0))
+                    InfoBanner(
+                      'Ada stok minus (terjual sebelum barang masuk diinput): '
+                      '${_products.where((p) => (_sistem[toNum(p['id']).toInt()] ?? 0) < 0).map((p) => p['nama']).join(', ')}',
+                      icon: Icons.warning_amber,
+                      color: Colors.red.shade700,
                     ),
                   if (kosongFokus.isNotEmpty)
                     InfoBanner('Stok kosong tipe fokus: ${kosongFokus.join(', ')}',
@@ -222,13 +226,13 @@ class _StokScreenState extends State<StokScreen> {
 
     return ListView(padding: const EdgeInsets.fromLTRB(12, 12, 12, 24), children: [
       InfoBanner(
-        _waktuInput != null
-            ? 'Stok diupdate pukul ${jamMenit(_waktuInput!)} WIB.'
-            : (_sumberAwal == null
-                ? 'Stok hari ini belum diupdate.'
-                : 'Stok hari ini belum diupdate. Angka di bawah = stok terakhir ${tgl(parseDate(_sumberAwal!))}.'),
-        icon: _waktuInput != null ? Icons.check_circle : Icons.schedule,
-        color: _waktuInput != null ? Colors.green.shade700 : Colors.orange.shade800,
+        _stokAwal == null
+            ? 'Stok awal toko ini belum diisi PC.'
+            : (_cekHariIni != null
+                ? 'Stok terkini (sudah dipotong penjualan). Dicek PC hari ini pukul ${jamMenit(_cekHariIni!)} WIB.'
+                : 'Stok terkini (sudah dipotong penjualan). Hari ini belum dicek PC.'),
+        icon: _cekHariIni != null ? Icons.check_circle : Icons.schedule,
+        color: _cekHariIni != null ? Colors.green.shade700 : Colors.orange.shade800,
       ),
       if (kosongFokus.isNotEmpty)
         InfoBanner('Stok kosong tipe fokus: ${kosongFokus.join(', ')}',
