@@ -3,8 +3,9 @@
 --   Hanya nama yang terdaftar sebagai PC di aplikasi (nama Sales & PC lain dilewati).
 --   Semua: Cash - Tunai - Walk-in (PC bisa mengubah sendiri lewat riwayat penjualan).
 --   Harga, series, tipe fokus diambil dari list produk area toko PC.
+--   Unit DEMO tidak dimasukkan. Produk dicocokkan tanpa spasi / + / garis miring.
 --   Tidak memotong stok (penjualan sebelum stok awal). Aman dijalankan ulang (yang sudah ada dilewati).
---   Dilewati karena tidak ada di list produk: A3 Pro 5G (1), A3x 6+128 (1)
+--   Dilewati karena tidak ada di list produk: A7 PRO 5G 6+256 (DEMO) (unit demo) (1), Find X9s 12+256 (DEMO) (unit demo) (1), RENO16 F 5G 8+128 (DEMO) (unit demo) (1)
 -- =====================================================================
 with v(tanggal, pc, produk, qty) as (values
   (date '2026-11-01', 'A AN DAENI', 'A6 [6/128]', 1),
@@ -152,6 +153,7 @@ with v(tanggal, pc, produk, qty) as (values
   (date '2026-11-02', 'LUCI LAUZA SAHIRA', 'A6C [4/64]', 1),
   (date '2026-11-02', 'LUCI LAUZA SAHIRA', 'A6X [6/128]', 1),
   (date '2026-11-02', 'M. KASMIRI', 'A6C [4/64]', 3),
+  (date '2026-11-02', 'M. SALAHUDIN AL AYUBI', 'A3X 6+128', 1),
   (date '2026-11-02', 'M. SALAHUDIN AL AYUBI', 'A6C [4/64]', 1),
   (date '2026-11-02', 'MARIAM', 'RENO 16 F 5G [8/128]', 1),
   (date '2026-11-02', 'MAWADDAH', 'A6C [4/64]', 2),
@@ -199,7 +201,6 @@ with v(tanggal, pc, produk, qty) as (values
   (date '2026-11-02', 'SILVI RESGITA PUTRI RISANTI', 'A6C [4/64]', 1),
   (date '2026-11-02', 'SINTA WULANDARI', 'RENO 16 F 5G [8/256]', 1),
   (date '2026-11-02', 'SITI AISYAH', 'RENO 16 F 5G [8/256]', 1),
-  (date '2026-11-02', 'SYSTEM 24 HR AUTO SOLD', 'FIND X9S [12/256]', 1),
   (date '2026-11-02', 'UTIN AMELIA PUTRI DEWI', 'A6X [4/128]', 1),
   (date '2026-11-02', 'UTIN AMELIA PUTRI DEWI', 'RENO 15 5G [12/256]', 1),
   (date '2026-11-02', 'WAHYU MUHAMMAD IKROM', 'A6C [4/64]', 1),
@@ -255,7 +256,7 @@ with v(tanggal, pc, produk, qty) as (values
   (date '2026-11-03', 'M. RAHMANI', 'A7 PRO 5G [6/256]', 1),
   (date '2026-11-03', 'MAWADDAH', 'A6C [4/128]', 1),
   (date '2026-11-03', 'MISNAWATI', 'A6C [4/64]', 1),
-  (date '2026-11-03', 'MISNAWATI', 'OPPO BAND 2', 1),
+  (date '2026-11-03', 'MISNAWATI', 'OPPO SMARTBAND', 1),
   (date '2026-11-03', 'MUFARIKHAH ANGGRAENI', 'A6 [6/128]', 1),
   (date '2026-11-03', 'MUFARIKHAH ANGGRAENI', 'A6C [4/64]', 1),
   (date '2026-11-03', 'MUHAMAD AHYAR', 'A6C [4/64]', 3),
@@ -633,8 +634,6 @@ with v(tanggal, pc, produk, qty) as (values
   (date '2026-11-07', 'SRI SUCI WATI', 'A6C [4/128]', 1),
   (date '2026-11-07', 'SUMARDI', 'A6 [6/128]', 2),
   (date '2026-11-07', 'SUMARDI', 'A6C [4/128]', 1),
-  (date '2026-11-07', 'SYSTEM 24 HR AUTO SOLD', 'A7 PRO 5G [6/256]', 1),
-  (date '2026-11-07', 'SYSTEM 24 HR AUTO SOLD', 'RENO 16 F 5G [8/128]', 1),
   (date '2026-11-07', 'TANIYA', 'A6C [4/128]', 1),
   (date '2026-11-07', 'THALHAH', 'A6C [4/128]', 1),
   (date '2026-11-07', 'ULFAH', 'A6C [4/64]', 1),
@@ -1133,6 +1132,7 @@ with v(tanggal, pc, produk, qty) as (values
   (date '2026-11-12', 'SILVI RESGITA PUTRI RISANTI', 'A6C [4/64]', 2),
   (date '2026-11-12', 'SINTA WULANDARI', 'A6C [4/128]', 1),
   (date '2026-11-12', 'SINTA WULANDARI', 'A6C [4/64]', 1),
+  (date '2026-11-12', 'SUMARDI', 'A3 PRO 5G', 1),
   (date '2026-11-12', 'TANIYA', 'A6C [4/128]', 1),
   (date '2026-11-12', 'TANTRI', 'RENO 16 F 5G [8/256]', 1),
   (date '2026-11-12', 'ULFAH', 'A6 [6/128]', 2),
@@ -1664,7 +1664,16 @@ cocok as (
   select v.*, p.id as pc_id, p.store_id, pr.id as product_id
     from v
     left join public.profiles p on p.role = 'pc' and upper(trim(p.nama)) = v.pc
-    left join public.products pr on pr.area_id = public.store_area(p.store_id) and upper(pr.nama) = upper(v.produk)
+    -- Nama produk dibandingkan tanpa spasi / tanda + / garis miring / kurung (A6c 4+128 = A6C [4/128]).
+    -- Jika tidak ada yang persis sama, pakai satu-satunya produk yang namanya diawali nama itu.
+    left join lateral (
+      select coalesce(
+        (select x.id from public.products x where x.area_id = public.store_area(p.store_id) and x.aktif
+            and regexp_replace(upper(x.nama), '[^A-Z0-9]', '', 'g') = regexp_replace(upper(v.produk), '[^A-Z0-9]', '', 'g') limit 1),
+        (select min(x.id) from public.products x where x.area_id = public.store_area(p.store_id) and x.aktif
+            and regexp_replace(upper(x.nama), '[^A-Z0-9]', '', 'g') like regexp_replace(upper(v.produk), '[^A-Z0-9]', '', 'g') || '%'
+          having count(*) = 1)) as id
+    ) pr on true
 ),
 masuk as (
   insert into public.sales (store_id, pc_id, tanggal, product_id, tipe, nama_produk, harga, qty, metode, cara_bayar, kategori_user)
