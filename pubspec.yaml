@@ -1,0 +1,28 @@
+name: daily_report_lka
+description: Daily Report LKA - laporan harian Product Consultant OPPO di toko Local Key Account (LKA).
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.5.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  flutter_localizations:
+    sdk: flutter
+  supabase_flutter: any
+  intl: any
+  # Dikunci di bawah v23: v23 butuh compileSdk 37 yang belum didukung Gradle bawaan Flutter.
+  flutter_local_notifications: '>=19.0.0 <23.0.0'
+  timezone: any
+  url_launcher: any
+  http: any
+  share_plus: any
+  # Update di dalam aplikasi: unduh APK baru lalu buka layar pasang Android
+  ota_update: ^7.1.0
+  # Export data ke Excel (.xlsx) untuk MT, Trainer, Sales
+  excel: ^4.0.6
+
+flutter:
+  uses-material-design: true

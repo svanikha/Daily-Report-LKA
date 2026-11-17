@@ -1,0 +1,46 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+
+import 'config.dart';
+import 'screens/session_gate.dart';
+import 'services/notif_service.dart';
+import 'services/presence_service.dart';
+import 'services/update_service.dart';
+import 'theme.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await initializeDateFormatting('id_ID');
+  await Supabase.initialize(url: AppConfig.supabaseUrl, anonKey: AppConfig.supabaseAnonKey);
+  if (!kIsWeb) await NotifService.init();
+  runApp(const DailyReportApp());
+  // Cek update saat aplikasi dibuka, setiap kembali dari latar belakang, dan tiap 30 menit.
+  UpdateService.start();
+  // Tanda aktif (lampu online) setiap 2 menit selama aplikasi terbuka.
+  PresenceService.start();
+}
+
+class DailyReportApp extends StatelessWidget {
+  const DailyReportApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Daily Report LKA',
+      navigatorKey: UpdateService.navigatorKey,
+      debugShowCheckedModeBanner: false,
+      theme: buildTheme(),
+      locale: const Locale('id', 'ID'),
+      supportedLocales: const [Locale('id', 'ID'), Locale('en', 'US')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+      home: const SessionGate(),
+    );
+  }
+}
