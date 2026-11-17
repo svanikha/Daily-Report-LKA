@@ -1,9 +1,10 @@
 -- =====================================================================
 -- Daily Report LKA - Data awal (dari Daftar NAMA APK LKA.xlsx, 17 Nov 2026)
--- 4 Trainer, 11 Sales, 11 area, 95 toko, 113 PC.
+-- 4 Trainer, 11 Sales, 11 area, 84 toko, 101 PC.
 -- Jalankan SETELAH schema.sql: SQL Editor -> New query -> tempel -> Run. Aman dijalankan ulang.
 -- Catatan: awalan "ID-SMQ-SMQ-" dibuang dari nama toko. Toko MULIANA PONSEL (PC Mariam,
 -- Sales Heri) dimasukkan ke area PKY 1 milik Heri; bisa dipindah MT lewat menu Toko.
+-- OPPO Store dan Erafone (NKA) tidak termasuk LKA.
 -- Data berikutnya ditambah lewat aplikasi (menu Kelola).
 -- =====================================================================
 
@@ -125,9 +126,7 @@ select v.nama, a.id from (values
   ('SUKSES MAKMUR. CV', 'PANGKALANBUN 1'),
   ('ZONA CELL P.BUN', 'PANGKALANBUN 1'),
   ('BORNEO MULTI JAYA. CV', 'PANGKALANBUN 2'),
-  ('ERAFONE PANGKALANBUN 2', 'PANGKALANBUN 2'),
   ('GLOBAL TOP RETALINDO. CV', 'PANGKALANBUN 2'),
-  ('OPPO Store - Pangkalan Bun', 'PANGKALANBUN 2'),
   ('PRIMA PONSEL', 'PANGKALANBUN 2'),
   ('ALFI MITRA TEKNOLOGI. CV', 'PKY 1'),
   ('BETANG CELLULAR', 'PKY 1'),
@@ -135,18 +134,12 @@ select v.nama, a.id from (values
   ('CV. NIKKO BERJAYA', 'PKY 1'),
   ('GO PHONE PALANGKARAYA', 'PKY 1'),
   ('MULIANA PONSEL', 'PKY 1'),
-  ('Oppo Store - Duta Mall Palangkaraya', 'PKY 1'),
-  ('Oppo Store - Palangkaraya', 'PKY 1'),
   ('PT. MEDIA GRUP INTERNASIONAL', 'PKY 1'),
   ('PT. SINAR JAYA SELULAR KAPUAS', 'PKY 1'),
   ('SINAR MAS ABADI . CV', 'PKY 1'),
   ('SUMBER JAYA', 'PKY 1'),
   ('CV. IP PKY PONSEL', 'PKY 2'),
   ('EGA CELL', 'PKY 2'),
-  ('ERAFONE DUTA MALL PKY', 'PKY 2'),
-  ('ERAFONE P.RAYA 03', 'PKY 2'),
-  ('ERAFONE PKY 1', 'PKY 2'),
-  ('ERAFONE PKY 2', 'PKY 2'),
   ('H&D', 'PKY 2'),
   ('HAFIZ CELL', 'PKY 2'),
   ('MITRA AGRA KOMUNIKA', 'PKY 2'),
@@ -168,9 +161,6 @@ select v.nama, a.id from (values
   ('BIMA PONSEL', 'SAMPIT KOTA 2'),
   ('CV. BERKAT ANUGERAH SOLUSINDO', 'SAMPIT KOTA 2'),
   ('DUNIA ELEKTRONIK', 'SAMPIT KOTA 2'),
-  ('ERAFONE SPT', 'SAMPIT KOTA 2'),
-  ('ERAFONE SPT 02', 'SAMPIT KOTA 2'),
-  ('OPPO Store - Sampit', 'SAMPIT KOTA 2'),
   ('PELANGI SELULER CV', 'SAMPIT KOTA 2'),
   ('STAR PHONE', 'SAMPIT KOTA 2'),
   ('TABRIIZ CELL', 'SAMPIT KOTA 2')
@@ -181,15 +171,11 @@ on conflict (area_id, nama) do nothing;
 -- 5. PC (satu toko boleh lebih dari satu PC)
 insert into public.profiles (nama, role, store_id, email)
 select v.nama, 'pc', s.id, v.email from (values
-  ('AHMAD SYAFIQ', 'pc.ahmad.syafiq@dailyreportlka.app', 'ERAFONE PKY 2', 'PKY 2'),
-  ('MUHAMMAD SYAUFI', 'pc.muhammad.syaufi@dailyreportlka.app', 'ERAFONE P.RAYA 03', 'PKY 2'),
-  ('NURSUCI LATIFATU SOLEHAH', 'pc.nursuci.latifatu.solehah@dailyreportlka.app', 'ERAFONE DUTA MALL PKY', 'PKY 2'),
   ('WAHYU MUHAMMAD IKROM', 'pc.wahyu.muhammad.ikrom@dailyreportlka.app', 'CV. IP PKY PONSEL', 'PKY 2'),
   ('NOVIYANA', 'pc.noviyana@dailyreportlka.app', 'RIZKY PONSEL', 'PKY 2'),
   ('ROMIYADI', 'pc.romiyadi@dailyreportlka.app', 'MITRA AGRA KOMUNIKA', 'PKY 2'),
   ('HADIJAH', 'pc.hadijah@dailyreportlka.app', 'HAFIZ CELL', 'PKY 2'),
   ('ALMIRA', 'pc.almira@dailyreportlka.app', 'H&D', 'PKY 2'),
-  ('INDRA ARYUDI', 'pc.indra.aryudi@dailyreportlka.app', 'ERAFONE PKY 1', 'PKY 2'),
   ('GIRI ADI LASA', 'pc.giri.adi.lasa@dailyreportlka.app', 'EGA CELL', 'PKY 2'),
   ('AYU PUJI LESTARI', 'pc.ayu.puji.lestari@dailyreportlka.app', 'PT. MEDIA GRUP INTERNASIONAL', 'PKY 1'),
   ('TANIYA', 'pc.taniya@dailyreportlka.app', 'BUDI MKIOS PONSEL', 'PKY 1'),
@@ -204,9 +190,6 @@ select v.nama, 'pc', s.id, v.email from (values
   ('SIBUN', 'pc.sibun@dailyreportlka.app', 'ALFI MITRA TEKNOLOGI. CV', 'PKY 1'),
   ('AKHMAD RIFKY MUNADA', 'pc.akhmad.rifky.munada@dailyreportlka.app', 'PT. SINAR JAYA SELULAR KAPUAS', 'PKY 1'),
   ('RESTU NOVITASARI', 'pc.restu.novitasari@dailyreportlka.app', 'PT. SINAR JAYA SELULAR KAPUAS', 'PKY 1'),
-  ('RIZKI PUJA AGUSTIN', 'pc.rizki.puja.agustin@dailyreportlka.app', 'Oppo Store - Palangkaraya', 'PKY 1'),
-  ('R. MAWAR DANIATY', 'pc.r.mawar.daniaty@dailyreportlka.app', 'Oppo Store - Duta Mall Palangkaraya', 'PKY 1'),
-  ('ROY JHOEDY KUSUMA', 'pc.roy.jhoedy.kusuma@dailyreportlka.app', 'Oppo Store - Duta Mall Palangkaraya', 'PKY 1'),
   ('MARIAM', 'pc.mariam@dailyreportlka.app', 'MULIANA PONSEL', 'PKY 1'),
   ('MAWADDAH', 'pc.mawaddah@dailyreportlka.app', 'ZEN PONSEL_K.KURUN', 'GUNUNG MAS'),
   ('JAINI', 'pc.jaini@dailyreportlka.app', 'ZEN PONSEL_K.KURUN', 'GUNUNG MAS'),
@@ -270,23 +253,18 @@ select v.nama, 'pc', s.id, v.email from (values
   ('JULFIA AYU LESTARI', 'pc.julfia.ayu.lestari@dailyreportlka.app', 'RAMA PONSEL', 'PURUK CAHU'),
   ('NADILA', 'pc.nadila@dailyreportlka.app', 'RAMA PONSEL', 'PURUK CAHU'),
   ('NABILA AI''SA PUTRI', 'pc.nabila.ai.sa.putri@dailyreportlka.app', 'CV. BERKAT ANUGERAH SOLUSINDO', 'SAMPIT KOTA 2'),
-  ('NURIYAH', 'pc.nuriyah@dailyreportlka.app', 'ERAFONE SPT 02', 'SAMPIT KOTA 2'),
   ('MOZA ANISA SAFITRI', 'pc.moza.anisa.safitri@dailyreportlka.app', 'TABRIIZ CELL', 'SAMPIT KOTA 2'),
   ('AHMAD DAVIN ALGIFARI', 'pc.ahmad.davin.algifari@dailyreportlka.app', 'BIMA PONSEL', 'SAMPIT KOTA 2'),
   ('HERLINA', 'pc.herlina@dailyreportlka.app', 'STAR PHONE', 'SAMPIT KOTA 2'),
   ('MUFARIKHAH ANGGRAENI', 'pc.mufarikhah.anggraeni@dailyreportlka.app', 'PELANGI SELULER CV', 'SAMPIT KOTA 2'),
-  ('ERA NOVALLISTI', 'pc.era.novallisti@dailyreportlka.app', 'ERAFONE SPT', 'SAMPIT KOTA 2'),
   ('KLINDRI KLARANA', 'pc.klindri.klarana@dailyreportlka.app', 'DUNIA ELEKTRONIK', 'SAMPIT KOTA 2'),
   ('MULIANTHI', 'pc.mulianthi@dailyreportlka.app', '88 PONSEL', 'SAMPIT KOTA 2'),
-  ('RABIATUL ADAWIYAH', 'pc.rabiatul.adawiyah@dailyreportlka.app', 'OPPO Store - Sampit', 'SAMPIT KOTA 2'),
   ('NELA WULANDARI', 'pc.nela.wulandari@dailyreportlka.app', 'BORNEO MULTI JAYA. CV', 'PANGKALANBUN 2'),
   ('FREDI LINTANG KUSUMO', 'pc.fredi.lintang.kusumo@dailyreportlka.app', 'PRIMA PONSEL', 'PANGKALANBUN 2'),
   ('TANZILLA NURDHIA ASRA', 'pc.tanzilla.nurdhia.asra@dailyreportlka.app', 'GLOBAL TOP RETALINDO. CV', 'PANGKALANBUN 2'),
   ('DESTI FITRIYANI', 'pc.desti.fitriyani@dailyreportlka.app', 'GLOBAL TOP RETALINDO. CV', 'PANGKALANBUN 2'),
   ('RIRIN ARUM KUSUMA', 'pc.ririn.arum.kusuma@dailyreportlka.app', 'GLOBAL TOP RETALINDO. CV', 'PANGKALANBUN 2'),
   ('RINA MARDIANA', 'pc.rina.mardiana@dailyreportlka.app', 'GLOBAL TOP RETALINDO. CV', 'PANGKALANBUN 2'),
-  ('UTIN AMELIA PUTRI DEWI', 'pc.utin.amelia.putri.dewi@dailyreportlka.app', 'ERAFONE PANGKALANBUN 2', 'PANGKALANBUN 2'),
-  ('NUR SYAHRUL RAHMADHANI', 'pc.nur.syahrul.rahmadhani@dailyreportlka.app', 'OPPO Store - Pangkalan Bun', 'PANGKALANBUN 2'),
   ('SILVI RESGITA PUTRI RISANTI', 'pc.silvi.resgita.putri.risanti@dailyreportlka.app', 'ROBY CELL', 'KASONGAN'),
   ('SINTA WULANDARI', 'pc.sinta.wulandari@dailyreportlka.app', 'JONI PONSEL 3', 'KASONGAN'),
   ('ISTIKAMAH', 'pc.istikamah@dailyreportlka.app', 'JONI PONSEL 2', 'KASONGAN'),
