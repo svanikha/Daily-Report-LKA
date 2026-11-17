@@ -26,6 +26,7 @@ import 'offday_screen.dart';
 import 'organisasi_screen.dart';
 import 'produk_screen.dart';
 import 'storage_screen.dart';
+import 'target_sales_screen.dart';
 import 'target_screen.dart';
 import 'toko_screen.dart';
 
@@ -370,6 +371,8 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
           me.isMt ? 'Atur KPI & insentif semua wilayah Trainer' : (me.isTrainer ? 'Atur UMR, tier, potongan, bonus/denda, insentif wilayahmu' : 'Lihat aturan KPI per Trainer'),
           const KpiScreen()),
       item(Icons.flag, 'Target bulanan', 'Target per toko dan per PC ($cak)', const TargetScreen()),
+      if (me.isMt || me.isTrainer)
+        item(Icons.leaderboard, 'Target Sales & Trainer', 'Target per Sales; target Trainer = gabungan Sales', const TargetSalesScreen()),
       item(Icons.event_busy, 'Kehadiran PC', 'Offday, izin, sakit PC ($cak)', const OffdayScreen()),
       item(Icons.store, 'Toko', 'Tambah, ubah, nonaktifkan toko ($cak)', const TokoScreen()),
       item(Icons.manage_accounts, 'PC', 'Tambah PC, tempatkan di toko, pindah, nonaktifkan, reset password',
