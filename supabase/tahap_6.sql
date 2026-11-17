@@ -9,6 +9,7 @@
 --   3. Target harian (unit, value, tipe fokus, IoT) bisa diatur MT / Trainer / Sales per PC per tanggal.
 --   4. Beranda: keaktifan PC memakai aplikasi (urutan daftar PC).
 --   5. Keamanan: pemeriksaan izin tidak bisa dilewati oleh akses tanpa login.
+--   6. Tipe fokus dipilih MT / Trainer dari list produk (atur_fokus) + bonus per unit tiap tipe (kpi_fokus).
 -- Aman dijalankan ulang. Data yang sudah ada TIDAK dihapus. JANGAN jalankan data_awal.sql lagi.
 -- =====================================================================
 
@@ -394,6 +395,16 @@ create table if not exists public.insentif_lain (
   primary key (trainer_id, bulan, kode)
 );
 
+-- Bonus per unit untuk setiap tipe fokus (label products.fokus) di wilayah Trainer.
+-- Tipe fokus dipilih MT / Trainer dari list produk (RPC atur_fokus); bonus = nilai x unit terjual bulan itu.
+create table if not exists public.kpi_fokus (
+  trainer_id uuid not null references public.profiles(id) on delete cascade,
+  bulan date not null,
+  fokus text not null,
+  nilai bigint not null default 0 check (nilai >= 0),
+  primary key (trainer_id, bulan, fokus)
+);
+
 -- ---------------------------------------------------------------------
 -- 4. FUNGSI BANTU & CAKUPAN
 -- ---------------------------------------------------------------------
@@ -731,6 +742,7 @@ begin
     when 'pc_target_harian' then (j->>'pc_id') || '|' || (j->>'tanggal')
     when 'insentif_produk' then (j->>'trainer_id') || '|' || (j->>'bulan') || '|' || (j->>'kode')
     when 'insentif_lain' then (j->>'trainer_id') || '|' || (j->>'bulan') || '|' || (j->>'kode')
+    when 'kpi_fokus' then (j->>'trainer_id') || '|' || (j->>'bulan') || '|' || (j->>'fokus')
     when 'kpi_gaji' then (j->>'trainer_id') || '|' || (j->>'bulan')
     else coalesce(j->>'id', '-') end;
   if tg_op = 'UPDATE' and to_jsonb(old) - 'diubah_pada' - 'updated_at' = to_jsonb(new) - 'diubah_pada' - 'updated_at' then
@@ -747,7 +759,7 @@ do $$
 declare t text;
 begin
   foreach t in array array['products', 'store_targets', 'pc_targets', 'pc_target_harian', 'kpi_gaji', 'kpi_tier', 'kpi_potongan',
-                           'kpi_aturan', 'insentif_produk', 'insentif_lain'] loop
+                           'kpi_aturan', 'insentif_produk', 'insentif_lain', 'kpi_fokus'] loop
     execute format('drop trigger if exists trg_audit on public.%I', t);
     execute format('create trigger trg_audit after insert or update or delete on public.%I for each row execute function public.audit_change()', t);
   end loop;
@@ -876,6 +888,7 @@ begin
   delete from public.kpi_aturan where trainer_id = t and bulan = k;
   delete from public.insentif_produk where trainer_id = t and bulan = k;
   delete from public.insentif_lain where trainer_id = t and bulan = k;
+  delete from public.kpi_fokus where trainer_id = t and bulan = k;
   insert into public.kpi_gaji select trainer_id, k, umr from public.kpi_gaji where trainer_id = t and bulan = d;
   insert into public.kpi_tier (trainer_id, bulan, urutan, nama, value_min, value_max, unit_min, persen_insentif, gaji_persen_umr)
     select trainer_id, k, urutan, nama, value_min, value_max, unit_min, persen_insentif, gaji_persen_umr
@@ -887,6 +900,7 @@ begin
       from public.kpi_aturan where trainer_id = t and bulan = d;
   insert into public.insentif_produk select trainer_id, k, kode, nilai from public.insentif_produk where trainer_id = t and bulan = d;
   insert into public.insentif_lain select trainer_id, k, kode, nilai from public.insentif_lain where trainer_id = t and bulan = d;
+  insert into public.kpi_fokus select trainer_id, k, fokus, nilai from public.kpi_fokus where trainer_id = t and bulan = d;
 end $$;
 
 -- Estimasi gaji satu PC pada bulan p_tanggal, dihitung s.d. p_tanggal
@@ -988,6 +1002,19 @@ begin
       end if;
     end if;
   end loop;
+  -- Bonus tipe fokus: nilai per unit x unit terjual tipe itu bulan ini
+  for a in
+    select k.fokus, k.nilai, coalesce(sum(s.qty), 0) as unit
+      from public.kpi_fokus k
+      join public.sales s on s.fokus = k.fokus and s.pc_id = p_pc and s.tanggal between v_awal and p_tanggal
+     where k.trainer_id = v_trainer and k.bulan = v_b and k.nilai > 0
+     group by k.fokus, k.nilai
+  loop
+    if a.unit > 0 then
+      v_bonus := v_bonus || jsonb_build_array(jsonb_build_object(
+        'nama', 'Tipe fokus ' || a.fokus || ' (' || a.nilai || '/unit)', 'grup', null, 'capai', a.unit, 'jumlah', a.nilai * a.unit));
+    end if;
+  end loop;
   select coalesce(sum((e ->> 'jumlah')::numeric), 0) into v_tot_bonus from jsonb_array_elements(v_bonus) e;
   select coalesce(sum((e ->> 'jumlah')::numeric), 0) into v_tot_denda from jsonb_array_elements(v_denda) e;
 
@@ -1070,7 +1097,7 @@ begin
                            'sales', 'checkins', 'competitor_sales', 'competitor_sales_detail',
                            'leasing_checks', 'daily_reports', 'pc_day_status', 'store_targets', 'pc_targets', 'pc_target_harian',
                            'audit_log', 'login_log', 'kpi_gaji', 'kpi_tier', 'kpi_potongan', 'kpi_aturan',
-                           'insentif_produk', 'insentif_lain'] loop
+                           'insentif_produk', 'insentif_lain', 'kpi_fokus'] loop
     execute format('alter table public.%I enable row level security', t);
   end loop;
 end $$;
@@ -1171,7 +1198,7 @@ create policy login_log_select on public.login_log for select to authenticated u
 do $$
 declare t text;
 begin
-  foreach t in array array['kpi_gaji', 'kpi_tier', 'kpi_potongan', 'kpi_aturan', 'insentif_produk', 'insentif_lain'] loop
+  foreach t in array array['kpi_gaji', 'kpi_tier', 'kpi_potongan', 'kpi_aturan', 'insentif_produk', 'insentif_lain', 'kpi_fokus'] loop
     execute format('drop policy if exists %I on public.%I', t || '_read', t);
     execute format('create policy %I on public.%I for select to authenticated using (true)', t || '_read', t);
     execute format('drop policy if exists %I on public.%I', t || '_trainer', t);
@@ -1445,6 +1472,28 @@ begin
 end $$;
 
 -- Area di cakupan akun (untuk pilihan di menu Kelola)
+-- Tandai / lepas tipe fokus satu produk (kode) di semua area wilayah Trainer. Khusus MT dan Trainer itu sendiri.
+-- Label = label fokus yang sudah dipakai tipe yang sama di area itu, atau nama tipe tanpa varian ("A6X [4/64]" -> "A6X").
+create or replace function public.atur_fokus(p_trainer uuid, p_kode text, p_fokus boolean) returns int
+language plpgsql security definer set search_path = public as $$
+declare n int;
+begin
+  if not coalesce(public.is_mt() or (public.my_role() = 'trainer' and p_trainer = public.my_profile_id()), false) then
+    raise exception 'Tipe fokus hanya diatur oleh MT atau Trainer wilayahnya';
+  end if;
+  update public.products p
+     set fokus = case when not p_fokus then null
+                      else coalesce((select q.fokus from public.products q
+                                      where q.area_id = p.area_id and q.fokus is not null and q.id <> p.id
+                                        and trim(split_part(q.nama, ' [', 1)) = trim(split_part(p.nama, ' [', 1)) limit 1),
+                                    trim(split_part(p.nama, ' [', 1))) end
+   where p.kode = p_kode
+     and p.area_id in (select a.id from public.areas a join public.trainer_sales ts on ts.sales_id = a.sales_id
+                        where ts.trainer_id = p_trainer);
+  get diagnostics n = row_count;
+  return n;
+end $$;
+
 create or replace function public.area_saya() returns jsonb
 language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(jsonb_build_object(
@@ -2185,6 +2234,7 @@ begin
   delete from public.kpi_aturan k where k.bulan < v_bulan and k.bulan < (select max(bulan) from public.kpi_gaji g where g.trainer_id = k.trainer_id);
   delete from public.insentif_produk k where k.bulan < v_bulan and k.bulan < (select max(bulan) from public.kpi_gaji g where g.trainer_id = k.trainer_id);
   delete from public.insentif_lain k where k.bulan < v_bulan and k.bulan < (select max(bulan) from public.kpi_gaji g where g.trainer_id = k.trainer_id);
+  delete from public.kpi_fokus k where k.bulan < v_bulan and k.bulan < (select max(bulan) from public.kpi_gaji g where g.trainer_id = k.trainer_id);
   delete from public.kpi_gaji k where k.bulan < v_bulan and k.bulan < (select max(bulan) from public.kpi_gaji g where g.trainer_id = k.trainer_id);
   perform set_config('lka.bersih', '', true);
   insert into public.bersih_log (pemicu, batas, rincian) values (p_pemicu, v_batas, r);
@@ -2263,4 +2313,5 @@ select 'Tahap 6 siap' as status,
        (select count(*) from pg_proc where proname in ('ms_area', 'atur_password', 'ringkasan_gaji', 'hapus_pc_permanen')
                                       and pronamespace = 'public'::regnamespace) as fungsi_ok_harus_4,
        (select pg_get_constraintdef(oid) from pg_constraint where conname = 'pc_day_status_status_check') as kehadiran,
-       to_regclass('public.pc_target_harian') is not null as target_harian_ok;
+       to_regclass('public.pc_target_harian') is not null as target_harian_ok,
+       to_regclass('public.kpi_fokus') is not null as bonus_fokus_ok;

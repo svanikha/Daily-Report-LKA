@@ -38,8 +38,8 @@ const _lainLabel = {
 };
 
 /// KPI & insentif per WILAYAH TRAINER per bulan: UMR, tier, potongan gaji, bonus & denda, insentif per produk.
-/// Berlaku untuk semua area Sales yang dipegang Trainer itu. Hanya Trainer pemilik wilayah yang bisa mengubah;
-/// MT dan Sales hanya melihat.
+/// Berlaku untuk semua area Sales yang dipegang Trainer itu. Diubah oleh Trainer pemilik wilayah dan MT;
+/// Sales hanya melihat. Tab Tipe fokus: pilih produk fokus dari list produk + bonus per unit tiap tipe.
 class KpiScreen extends StatefulWidget {
   const KpiScreen({super.key});
 
@@ -68,6 +68,8 @@ class _KpiScreenState extends State<KpiScreen> {
   List<Map<String, dynamic>> _produk = [];
   final Map<String, TextEditingController> _ins = {}; // kode produk -> nilai
   final Map<String, TextEditingController> _lain = {};
+  final Map<String, String> _fokusKode = {}; // kode produk -> label tipe fokus
+  final Map<String, TextEditingController> _bonusFokus = {}; // label tipe fokus -> bonus per unit
 
   String get _b => ymd(_bulan);
 
@@ -80,7 +82,7 @@ class _KpiScreenState extends State<KpiScreen> {
   @override
   void dispose() {
     _umr.dispose();
-    for (final c in [..._ins.values, ..._lain.values]) {
+    for (final c in [..._ins.values, ..._lain.values, ..._bonusFokus.values]) {
       c.dispose();
     }
     super.dispose();
@@ -124,7 +126,7 @@ class _KpiScreenState extends State<KpiScreen> {
         db.from('kpi_aturan').select().eq('trainer_id', a).eq('bulan', _b).order('jenis').order('urutan').order('id'),
         db
             .from('products')
-            .select('kode,tipe,nama,grup')
+            .select('kode,tipe,nama,grup,fokus')
             .eq('aktif', true)
             .inFilter('area_id', areaIds.isEmpty ? [0] : areaIds)
             .order('tipe')
@@ -132,6 +134,7 @@ class _KpiScreenState extends State<KpiScreen> {
             .order('nama'),
         db.from('insentif_produk').select('kode,nilai').eq('trainer_id', a).eq('bulan', _b),
         db.from('insentif_lain').select('kode,nilai').eq('trainer_id', a).eq('bulan', _b),
+        db.from('kpi_fokus').select('fokus,nilai').eq('trainer_id', a).eq('bulan', _b),
       ]);
       final g = asList(res[0]);
       _bulanAturan = g.isEmpty ? null : parseDate('${g.first['bulan']}');
@@ -140,6 +143,17 @@ class _KpiScreenState extends State<KpiScreen> {
       _tier = asList(res[1]);
       _potongan = asList(res[2]);
       _aturan = asList(res[3]);
+      _fokusKode.clear();
+      for (final p in asList(res[4])) {
+        if (p['fokus'] != null) _fokusKode.putIfAbsent('${p['kode']}', () => '${p['fokus']}');
+      }
+      final bonus = {for (final r in asList(res[7])) '${r['fokus']}': toNum(r['nilai']).toInt()};
+      for (final c in _bonusFokus.values) {
+        c.dispose();
+      }
+      _bonusFokus
+        ..clear()
+        ..addAll({for (final l in _fokusKode.values.toSet()) l: TextEditingController(text: '${bonus[l] ?? 0}')});
       final kodeAda = <String>{};
       _produk = [for (final p in asList(res[4])) if (kodeAda.add('${p['kode']}')) p];
       final ins = {for (final r in asList(res[5])) '${r['kode']}': toNum(r['nilai']).toInt()};
@@ -194,7 +208,7 @@ class _KpiScreenState extends State<KpiScreen> {
   @override
   Widget build(BuildContext context) {
     return DefaultTabController(
-      length: 4,
+      length: 5,
       child: Scaffold(
         appBar: AppBar(
           title: const Text('KPI & insentif'),
@@ -203,6 +217,7 @@ class _KpiScreenState extends State<KpiScreen> {
             Tab(text: 'Bonus & denda'),
             Tab(text: 'Insentif HP'),
             Tab(text: 'Insentif IoT'),
+            Tab(text: 'Tipe fokus'),
           ]),
         ),
         body: Column(children: [
@@ -246,7 +261,7 @@ class _KpiScreenState extends State<KpiScreen> {
                     ? ErrorRetry(error: _error!, onRetry: _load)
                     : !_ada
                         ? _belumAda()
-                        : TabBarView(children: [_tabGaji(), _tabAturan(), _tabInsentif('HP'), _tabInsentif('IOT')]),
+                        : TabBarView(children: [_tabGaji(), _tabAturan(), _tabInsentif('HP'), _tabInsentif('IOT'), _tabFokus()]),
           ),
         ]),
       ),
@@ -473,6 +488,154 @@ class _KpiScreenState extends State<KpiScreen> {
           for (final k in kodeLain) {'trainer_id': _trainer, 'bulan': _b, 'kode': k, 'nilai': digitsOnly(_lain[k]!.text)},
         ], onConflict: 'trainer_id,bulan,kode');
       }, 'Insentif tersimpan');
+
+  // ---------------------------- TIPE FOKUS ----------------------------
+  /// Produk fokus dikelompokkan per tipe (label), masing-masing dengan bonus per unit.
+  Widget _tabFokus() {
+    final perLabel = <String, List<Map<String, dynamic>>>{};
+    for (final p in _produk) {
+      final l = _fokusKode['${p['kode']}'];
+      if (l != null) perLabel.putIfAbsent(l, () => []).add(p);
+    }
+    final labels = perLabel.keys.toList()..sort();
+    return Column(children: [
+      Expanded(
+        child: ListView(padding: const EdgeInsets.fromLTRB(12, 8, 12, 16), children: [
+          const Text(
+              'Pilih produk dari list produk untuk dijadikan tipe fokus wilayah ini. Tipe fokus dihitung di target & '
+              'sell out "Tipe fokus", dan setiap tipe bisa diberi bonus per unit (dibayar sesuai unit terjual bulan itu). '
+              'Bonus "Unit semua tipe fokus" di tab Bonus & denda tetap berlaku.',
+              style: TextStyle(fontSize: 12)),
+          const SizedBox(height: 8),
+          OutlinedButton.icon(
+            onPressed: _kunci ? null : _tambahFokus,
+            icon: const Icon(Icons.add),
+            label: const Text('Tambah produk ke tipe fokus'),
+          ),
+          if (labels.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Text('Belum ada tipe fokus.', textAlign: TextAlign.center),
+            ),
+          for (final l in labels)
+            Card(
+              margin: const EdgeInsets.only(top: 8),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 10, 12, 8),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Row(children: [
+                    Expanded(child: Text(l, style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 15))),
+                    SizedBox(
+                      width: 140,
+                      child: TextField(
+                        controller: _bonusFokus[l],
+                        enabled: !_kunci,
+                        textAlign: TextAlign.right,
+                        keyboardType: TextInputType.number,
+                        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                        decoration: const InputDecoration(
+                            isDense: true, prefixText: 'Rp ', suffixText: '/unit', labelText: 'Bonus'),
+                      ),
+                    ),
+                  ]),
+                  const SizedBox(height: 6),
+                  Wrap(spacing: 6, runSpacing: 4, children: [
+                    for (final p in perLabel[l]!)
+                      InputChip(
+                        label: Text('${p['nama']}', style: const TextStyle(fontSize: 12)),
+                        onDeleted: _kunci ? null : () => _lepasFokus(p),
+                      ),
+                  ]),
+                ]),
+              ),
+            ),
+        ]),
+      ),
+      SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: FilledButton.icon(
+            onPressed: _kunci || labels.isEmpty ? null : _simpanBonusFokus,
+            icon: const Icon(Icons.save),
+            label: const Text('Simpan bonus tipe fokus'),
+            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+          ),
+        ),
+      ),
+    ]);
+  }
+
+  /// Pilih beberapa produk (yang belum fokus) dari list produk wilayah ini.
+  Future<void> _tambahFokus() async {
+    final calon = _produk.where((p) => !_fokusKode.containsKey('${p['kode']}')).toList();
+    final pilih = <String>{};
+    var q = '';
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setD) {
+          final list = calon.where((p) => q.isEmpty || '${p['nama']} ${p['grup']}'.toLowerCase().contains(q)).toList();
+          return AlertDialog(
+            title: const Text('Tambah tipe fokus'),
+            contentPadding: const EdgeInsets.fromLTRB(8, 12, 8, 0),
+            content: SizedBox(
+              width: double.maxFinite,
+              height: 420,
+              child: Column(children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  child: TextField(
+                    decoration: const InputDecoration(prefixIcon: Icon(Icons.search), hintText: 'Cari produk...', isDense: true),
+                    onChanged: (v) => setD(() => q = v.trim().toLowerCase()),
+                  ),
+                ),
+                Expanded(
+                  child: ListView(children: [
+                    for (final p in list)
+                      CheckboxListTile(
+                        dense: true,
+                        value: pilih.contains('${p['kode']}'),
+                        title: Text('${p['nama']}'),
+                        subtitle: Text('${p['grup']}'),
+                        onChanged: (v) => setD(() => v == true ? pilih.add('${p['kode']}') : pilih.remove('${p['kode']}')),
+                      ),
+                  ]),
+                ),
+              ]),
+            ),
+            actions: [
+              TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+              FilledButton(onPressed: () => Navigator.pop(ctx, true), child: Text('Tambah (${pilih.length})')),
+            ],
+          );
+        },
+      ),
+    );
+    if (ok != true || pilih.isEmpty) return;
+    await _jalankan(() async {
+      for (final k in pilih) {
+        await Session.db.rpc('atur_fokus', params: {'p_trainer': _trainer, 'p_kode': k, 'p_fokus': true});
+      }
+    }, '${pilih.length} produk ditambahkan ke tipe fokus');
+  }
+
+  Future<void> _lepasFokus(Map<String, dynamic> p) async {
+    final ok = await confirmDialog(context, 'Lepas ${p['nama']} dari tipe fokus?',
+        'Penjualan berikutnya tidak dihitung tipe fokus. Penjualan yang sudah tercatat tidak berubah.',
+        yes: 'Lepas');
+    if (!ok) return;
+    await _jalankan(
+      () => Session.db.rpc('atur_fokus', params: {'p_trainer': _trainer, 'p_kode': p['kode'], 'p_fokus': false}),
+      '${p['nama']} dilepas dari tipe fokus',
+    );
+  }
+
+  Future<void> _simpanBonusFokus() => _jalankan(() async {
+        await Session.db.from('kpi_fokus').upsert([
+          for (final e in _bonusFokus.entries)
+            {'trainer_id': _trainer, 'bulan': _b, 'fokus': e.key, 'nilai': digitsOnly(e.value.text)},
+        ], onConflict: 'trainer_id,bulan,fokus');
+      }, 'Bonus tipe fokus tersimpan');
 
   // ---------------------------- UMUM ----------------------------------
   Future<void> _simpan(String tabel, Map<String, dynamic>? lama, Map<String, dynamic> v, String pesan) => _jalankan(() async {
