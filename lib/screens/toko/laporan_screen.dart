@@ -148,7 +148,7 @@ class LaporanCard extends StatelessWidget {
                 style: const TextStyle(color: Colors.white, fontSize: 12)),
           ]),
         ),
-        if (libur != null) _banner(libur == 'izin' ? 'PC IZIN HARI INI' : 'PC OFFDAY HARI INI', const Color(0xFF00897B)),
+        if (libur != null) _banner('PC ${labelLibur(libur)} HARI INI',const Color(0xFF00897B)),
         _section('SELL-OUT OPPO', [
           Row(children: [
             Expanded(child: _stat('Unit HP hari ini', '${angka(unitHari)} unit', rupiah(toNum(hari['value'])))),

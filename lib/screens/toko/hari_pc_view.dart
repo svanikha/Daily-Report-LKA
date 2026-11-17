@@ -9,6 +9,7 @@ import '../../widgets/kalender_penjualan.dart';
 import '../../widgets/kontribusi_kategori.dart';
 import '../../widgets/kontribusi_tipe.dart';
 import '../../widgets/sell_out_card.dart';
+import '../../widgets/target_harian.dart';
 import '../../widgets/widgets.dart';
 import 'cek_limit_screen.dart';
 import 'laporan_screen.dart';
@@ -17,15 +18,29 @@ import 'penjualan_bulan_screen.dart';
 import 'penjualan_screen.dart';
 import 'stok_screen.dart';
 
-/// Laporan satu PC pada satu tanggal: status, timegone, capaian, insentif, estimasi gaji,
-/// kalender, kontribusi tipe, empat bagian laporan, dan tombol kirim laporan.
-/// Dipakai beranda PC dan detail PC untuk atasan.
+/// Bagian yang ditampilkan HariPcView.
+enum BagianPc {
+  /// Ringkasan pencapaian: target harian, kalender + tambah penjualan, sell out, insentif, gaji, kontribusi.
+  beranda,
+
+  /// Laporan harian: status, update stok, MS Allbrand, cek limit, kirim & bagikan laporan.
+  laporan,
+
+  /// Keduanya (detail PC untuk atasan).
+  semua,
+}
+
+/// Satu PC pada satu tanggal. Dipakai tab Beranda & Laporan PC, dan detail PC untuk atasan.
 class HariPcView extends StatefulWidget {
   final PcHari pc;
+  final BagianPc bagian;
 
   /// Dipanggil setiap data selesai dimuat (beranda PC memakainya untuk menjadwalkan pengingat).
   final void Function(Map<String, dynamic> rekap)? onLoaded;
-  const HariPcView({super.key, required this.pc, this.onLoaded});
+
+  /// Dipanggil setelah data diubah dari layar ini (tab lain ikut dimuat ulang).
+  final VoidCallback? onChanged;
+  const HariPcView({super.key, required this.pc, this.bagian = BagianPc.semua, this.onLoaded, this.onChanged});
 
   @override
   State<HariPcView> createState() => HariPcViewState();
@@ -44,6 +59,9 @@ class HariPcViewState extends State<HariPcView> {
         areaId: _r['area_id'] == null ? null : toNum(_r['area_id']).toInt(),
         area: _r['area'] as String?,
       );
+
+  bool get _beranda => widget.bagian != BagianPc.laporan;
+  bool get _laporan => widget.bagian != BagianPc.beranda;
 
   @override
   void initState() {
@@ -74,18 +92,21 @@ class HariPcViewState extends State<HariPcView> {
 
   Future<void> _open(Widget page) async {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
-    load();
+    await load();
+    widget.onChanged?.call();
   }
 
-  Future<void> _kirim() async {
+  Future<void> _kirimDanBagikan() async {
     final ok = await confirmDialog(context, 'Kirim laporan?',
-        'Laporan ${t.pcNama} ${tglPendek(t.tanggal)} akan ditandai terkirim. Data masih bisa dikoreksi sampai 22.30 WIB.',
+        'Laporan ${t.pcNama} ${tglPendek(t.tanggal)} ditandai terkirim, lalu gambar laporan dibuka untuk dibagikan '
+        'ke grup WhatsApp. Data masih bisa dikoreksi sampai $batasLaporanText WIB.',
         yes: 'Kirim');
     if (!ok) return;
     setState(() => _sending = true);
     try {
       await Session.db.rpc('kirim_laporan', params: {'p_tanggal': t.tgl});
       await load();
+      widget.onChanged?.call();
       if (mounted) _open(LaporanScreen(pc: t));
     } catch (e) {
       if (mounted) showErr(context, e);
@@ -101,16 +122,8 @@ class HariPcViewState extends State<HariPcView> {
     final hari = asMap(_r['hari']);
     final bulan = asMap(_r['bulan']);
     final target = asMap(_r['target']);
-    final laporan = _r['laporan'] == null ? null : asMap(_r['laporan']);
-    final kurang = (_r['kurang'] as List?)?.map((e) => '$e').toList() ?? const <String>[];
-    final stokUpdate = _r['stok_update'] == null ? null : parseWib('${_r['stok_update']}');
-    final penjualan = asList(_r['penjualan']);
-    final cek = asList(_r['cek_limit']);
     final libur = _r['libur'] as String?;
     final hk = HariKerja.dari(t.tanggal, offdaySisa: toNum(_r['offday_sisa']).toInt());
-    final tokoUnit = toNum(hari['toko_unit']);
-    final komp = toNum(hari['kompetitor']);
-    final pcLain = (_r['pc_lain'] as List?)?.map((e) => '$e').toList() ?? const <String>[];
 
     return RefreshIndicator(
       onRefresh: load,
@@ -122,86 +135,100 @@ class HariPcViewState extends State<HariPcView> {
             icon: Icons.person,
           ),
         if (libur != null)
-          InfoBanner('${libur == 'izin' ? 'IZIN' : 'OFFDAY'}: PC tidak wajib lapor hari ini.',
+          InfoBanner('${labelLibur(libur)}: PC tidak wajib lapor dan hari ini tidak dihitung hari kerja.',
               icon: Icons.beach_access, color: Colors.teal),
-        _statusLaporan(laporan, kurang),
-        TimegoneBar(hk: hk),
-        SellOutCard(
-          hari: hari,
-          bulan: bulan,
-          target: target,
-          hk: hk,
-          onTapHp: () => _open(PenjualanBulanScreen(toko: t, tipe: 'HP')),
-          onTapIot: () => _open(PenjualanBulanScreen(toko: t, tipe: 'IOT')),
-        ),
-        InsentifHariCard(key: ValueKey('ins-${t.pcId}-${t.tgl}-$_rev'), pcId: t.pcId, tanggal: t.tanggal),
-        EstimasiGajiCard(key: ValueKey('gaji-${t.pcId}-${t.tgl}-$_rev'), pcId: t.pcId, tanggal: t.tanggal, pcNama: t.pcNama),
-        KalenderPenjualan(
-          key: ValueKey('kal-${t.pcId}-$_rev'),
-          selected: t.tanggal,
-          filter: Cakupan(pcId: t.pcId),
-          onSelect: (d) => _open(PenjualanScreen(toko: t.salin(tanggal: d))),
-        ),
-        if (!me.isPc)
-          KontribusiKategori(key: ValueKey('kk-${t.pcId}-${t.tgl}-$_rev'), filter: Cakupan(pcId: t.pcId), tanggal: t.tanggal),
-        KontribusiTipe(key: ValueKey('kt-${t.pcId}-${t.tgl}-$_rev'), filter: Cakupan(pcId: t.pcId), tanggal: t.tanggal),
-        const SectionHeader('Laporan harian'),
-        _tile(
-          icon: Icons.inventory_2,
-          title: 'Update stok (per toko)',
-          status: _r['stok_awal_pada'] == null
-              ? 'Stok awal belum diisi: hitung stok fisik toko${pcLain.isNotEmpty ? ' (cukup 1 PC di toko)' : ''}'
-              : stokUpdate == null
-                  ? 'Hari ini belum dicek${pcLain.isNotEmpty ? ' · bisa dicek PC lain di toko' : ''}'
-                  : 'Dicek ${jamMenit(stokUpdate)}${pcLain.isNotEmpty ? ' · dipakai bersama ${pcLain.join(', ')}' : ''}',
-          ok: stokUpdate != null,
-          onTap: () => _open(StokScreen(toko: t)),
-        ),
-        _tile(
-          icon: Icons.point_of_sale,
-          title: 'Penjualan',
-          status: penjualan.isNotEmpty
-              ? 'HP ${angka(toNum(hari['unit']))} unit · ${rupiah(toNum(hari['value']))} · IoT ${angka(toNum(hari['iot']))}'
-              : (_r['nihil_penjualan'] == true ? 'Tidak ada penjualan (NOSELL)' : 'Belum ada penjualan'),
-          ok: penjualan.isNotEmpty || _r['nihil_penjualan'] == true,
-          onTap: () => _open(PenjualanScreen(toko: t)),
-        ),
-        _tile(
-          icon: Icons.pie_chart,
-          title: 'MS Allbrand (per toko)',
-          status: _r['kompetitor_terisi'] == true
-              ? 'Brand lain ${angka(komp)} unit · MS OPPO toko '
-                  '${tokoUnit + komp > 0 ? '${(tokoUnit / (tokoUnit + komp) * 100).toStringAsFixed(0)}%' : '-'}'
-              : 'Belum diisi',
-          ok: _r['kompetitor_terisi'] == true,
-          onTap: () => _open(MsAllbrandScreen(toko: t)),
-        ),
-        _tile(
-          icon: Icons.fact_check,
-          title: 'Cek limit (wajib)',
-          status: cek.isNotEmpty
-              ? '${cek.length} pengajuan · ${cek.where((c) => c['hasil'] == 'Approve').length} approve'
-              : (_r['nihil_cek_limit'] == true ? 'Tidak ada pengajuan hari ini' : 'Belum diisi'),
-          ok: cek.isNotEmpty || _r['nihil_cek_limit'] == true,
-          onTap: () => _open(CekLimitScreen(pc: t)),
-        ),
-        const SizedBox(height: 16),
-        if (laporan == null && me.isPc && t.milikSaya && t.bolehIsiHarian)
-          FilledButton.icon(
-            onPressed: _sending ? null : _kirim,
-            icon: busyIcon(_sending, Icons.send),
-            label: const Text('Kirim laporan'),
-            style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(48)),
+        if (_laporan) ..._bagianLaporan(me),
+        if (_beranda) ...[
+          if (widget.bagian == BagianPc.semua) const SectionHeader('Pencapaian'),
+          TargetHarianCard(bulan: bulan, target: target, hari: hari, hk: hk),
+          KalenderPenjualan(
+            key: ValueKey('kal-${t.pcId}-$_rev'),
+            selected: t.tanggal,
+            filter: Cakupan(pcId: t.pcId),
+            onSelect: (d) => _open(PenjualanScreen(toko: t.salin(tanggal: d))),
           ),
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: () => _open(LaporanScreen(pc: t)),
-          icon: const Icon(Icons.image),
-          label: const Text('Lihat & bagikan gambar laporan'),
-          style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(48)),
-        ),
+          if (t.bolehIsiPenjualan || !me.isPc)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: FilledButton.icon(
+                onPressed: () => _open(PenjualanScreen(toko: t)),
+                icon: const Icon(Icons.add_shopping_cart),
+                label: Text(_r['nihil_penjualan'] == true
+                    ? 'Penjualan hari ini (NOSELL)'
+                    : 'Tambah penjualan · hari ini HP ${angka(toNum(hari['unit']))} · IoT ${angka(toNum(hari['iot']))}'),
+                style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(46)),
+              ),
+            ),
+          SellOutCard(
+            hari: hari,
+            bulan: bulan,
+            target: target,
+            hk: hk,
+            onTapHp: () => _open(PenjualanBulanScreen(toko: t, tipe: 'HP')),
+            onTapIot: () => _open(PenjualanBulanScreen(toko: t, tipe: 'IOT')),
+          ),
+          InsentifHariCard(key: ValueKey('ins-${t.pcId}-${t.tgl}-$_rev'), pcId: t.pcId, tanggal: t.tanggal),
+          EstimasiGajiCard(key: ValueKey('gaji-${t.pcId}-${t.tgl}-$_rev'), pcId: t.pcId, tanggal: t.tanggal, pcNama: t.pcNama),
+          KontribusiTipe(key: ValueKey('kt-${t.pcId}-${t.tgl}-$_rev'), filter: Cakupan(pcId: t.pcId), tanggal: t.tanggal),
+          if (!me.isPc)
+            KontribusiKategori(key: ValueKey('kk-${t.pcId}-${t.tgl}-$_rev'), filter: Cakupan(pcId: t.pcId), tanggal: t.tanggal),
+        ],
       ]),
     );
+  }
+
+  List<Widget> _bagianLaporan(Profile me) {
+    final hari = asMap(_r['hari']);
+    final laporan = _r['laporan'] == null ? null : asMap(_r['laporan']);
+    final kurang = (_r['kurang'] as List?)?.map((e) => '$e').toList() ?? const <String>[];
+    final stokUpdate = _r['stok_update'] == null ? null : parseWib('${_r['stok_update']}');
+    final cek = asList(_r['cek_limit']);
+    final tokoUnit = toNum(hari['toko_unit']);
+    final komp = toNum(hari['kompetitor']);
+    final pcLain = (_r['pc_lain'] as List?)?.map((e) => '$e').toList() ?? const <String>[];
+    final bisaKirim = laporan == null && me.isPc && t.milikSaya && t.bolehIsiHarian;
+    return [
+      _statusLaporan(laporan, kurang),
+      if (widget.bagian == BagianPc.semua) const SectionHeader('Laporan harian'),
+      _tile(
+        icon: Icons.inventory_2,
+        title: 'Update stok',
+        status: _r['stok_awal_pada'] == null
+            ? 'Stok awal belum diisi: hitung stok fisik toko${pcLain.isNotEmpty ? ' (cukup 1 PC di toko)' : ''}'
+            : stokUpdate == null
+                ? 'Hari ini belum dicek${pcLain.isNotEmpty ? ' · bisa dicek PC lain di toko' : ''}'
+                : 'Dicek ${jamMenit(stokUpdate)}${pcLain.isNotEmpty ? ' · dipakai bersama ${pcLain.join(', ')}' : ''}',
+        ok: stokUpdate != null,
+        onTap: () => _open(StokScreen(toko: t)),
+      ),
+      _tile(
+        icon: Icons.pie_chart,
+        title: 'MS Allbrand',
+        status: _r['kompetitor_terisi'] == true
+            ? 'Brand lain ${angka(komp)} unit · MS OPPO toko '
+                '${tokoUnit + komp > 0 ? '${(tokoUnit / (tokoUnit + komp) * 100).toStringAsFixed(0)}%' : '-'}'
+            : 'Belum diisi',
+        ok: _r['kompetitor_terisi'] == true,
+        onTap: () => _open(MsAllbrandScreen(toko: t)),
+      ),
+      _tile(
+        icon: Icons.fact_check,
+        title: 'Cek limit',
+        status: cek.isNotEmpty
+            ? '${cek.length} pengajuan · ${cek.where((c) => c['hasil'] == 'Approve').length} approve'
+            : (_r['nihil_cek_limit'] == true ? 'Tidak ada pengajuan hari ini' : 'Belum diisi'),
+        ok: cek.isNotEmpty || _r['nihil_cek_limit'] == true,
+        onTap: () => _open(CekLimitScreen(pc: t)),
+      ),
+      const SizedBox(height: 12),
+      FilledButton.icon(
+        onPressed: _sending ? null : (bisaKirim ? _kirimDanBagikan : () => _open(LaporanScreen(pc: t))),
+        icon: busyIcon(_sending, bisaKirim ? Icons.send : Icons.share),
+        label: Text(bisaKirim ? 'Kirim laporan & bagikan gambar' : 'Bagikan gambar laporan'),
+        style: FilledButton.styleFrom(minimumSize: const Size.fromHeight(50)),
+      ),
+      const SizedBox(height: 8),
+    ];
   }
 
   Widget _statusLaporan(Map<String, dynamic>? laporan, List<String> kurang) {

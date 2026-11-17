@@ -8,12 +8,15 @@ import '../../services/session.dart';
 import '../../services/update_service.dart';
 import '../../utils.dart';
 import '../../widgets/beranda_cards.dart';
+import '../../widgets/kalender_penjualan.dart';
 import '../../widgets/kontribusi_bayar.dart';
 import '../../widgets/kontribusi_kategori.dart';
 import '../../widgets/kontribusi_tipe.dart';
+import '../../widgets/pickers.dart';
 import '../../widgets/sell_out_card.dart';
 import '../../widgets/widgets.dart';
 import '../toko/hari_pc_view.dart';
+import '../toko/penjualan_screen.dart';
 import '../toko/stok_screen.dart';
 import 'akun_pc_screen.dart';
 import 'audit_screen.dart';
@@ -63,7 +66,7 @@ class _AtasanHomeState extends State<AtasanHome> {
   void initState() {
     super.initState();
     _refresh = Timer.periodic(const Duration(minutes: 2), (_) {
-      if (mounted && _tab == 0) _load();
+      if (mounted && _tab < 2) _load();
     });
     _load();
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -158,25 +161,24 @@ class _AtasanHomeState extends State<AtasanHome> {
 
   @override
   Widget build(BuildContext context) {
+    const judulTab = ['Beranda', 'Laporan', 'Kelola'];
     return PopScope(
-      canPop: !_bisaKembali || _tab != 0,
+      canPop: !_bisaKembali || _tab == 2,
       onPopInvokedWithResult: (didPop, _) {
         if (!didPop) _kembali();
       },
       child: Scaffold(
         appBar: AppBar(
-          leading: _bisaKembali && _tab == 0 ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: _kembali) : null,
+          leading: _bisaKembali && _tab < 2 ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: _kembali) : null,
           title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(_tab != 0
+            Text(_tab == 2
                 ? 'Kelola'
-                : (_sales != null
-                    ? 'Sales ${_sales!['sales']}'
-                    : (_trainer != null ? 'Trainer ${_trainer!['trainer']}' : 'Beranda'))),
+                : '${judulTab[_tab]}${_sales != null ? ' · Sales ${_sales!['sales']}' : (_trainer != null ? ' · Trainer ${_trainer!['trainer']}' : '')}'),
             Text('${me.nama} · ${me.roleLabel} · ${me.cakupan}',
                 style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal)),
           ]),
           actions: [
-            if (_tab == 0) ...[
+            if (_tab < 2) ...[
               IconButton(onPressed: _pickDate, icon: const Icon(Icons.calendar_month), tooltip: 'Pilih tanggal'),
               IconButton(onPressed: _load, icon: const Icon(Icons.refresh), tooltip: 'Muat ulang'),
             ],
@@ -188,102 +190,138 @@ class _AtasanHomeState extends State<AtasanHome> {
           onDestinationSelected: (i) => setState(() => _tab = i),
           destinations: const [
             NavigationDestination(icon: Icon(Icons.dashboard), label: 'Beranda'),
+            NavigationDestination(icon: Icon(Icons.assignment), label: 'Laporan'),
             NavigationDestination(icon: Icon(Icons.settings), label: 'Kelola'),
           ],
         ),
-        body: _tab == 0 ? _beranda() : _kelola(),
+        body: _tab == 2 ? _kelola() : _isi(laporan: _tab == 1),
       ),
     );
   }
 
+  String get _judul => _sales != null
+      ? 'area ${_sales!['area']}'
+      : (_trainer != null ? 'Trainer ${_trainer!['trainer']}' : me.cakupan);
+
+  /// Tambah penjualan untuk satu PC (koreksi oleh atasan): pilih PC, lalu buka penjualan hari ini.
+  Future<void> _tambahPenjualan() async {
+    final pcs = asList(_b['per_pc']);
+    final p = await showSearchPicker(
+      context,
+      title: 'Tambah penjualan untuk PC',
+      loader: () async => pcs,
+      titleOf: (m) => '${m['pc']}',
+      subtitleOf: (m) => '${m['toko']}',
+    );
+    if (p == null || !mounted) return;
+    final pc = await PcDetailScreen.muat(context, '${p['pc_id']}', _tanggal);
+    if (pc == null || !mounted) return;
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => PenjualanScreen(toko: pc)));
+    _load();
+  }
+
   // ------------------------------------------------------------------
-  Widget _beranda() {
+  Widget _isi({required bool laporan}) {
     if (_loading) return const Center(child: CircularProgressIndicator());
     if (_error != null) return ErrorRetry(error: _error!, onRetry: _load);
     final hk = HariKerja.dari(_tanggal);
     final hariIni = isSameDay(_tanggal, wibToday());
-    final hari = asMap(_b['hari']);
-    final bulan = asMap(_b['bulan']);
-    final target = asMap(_b['target']);
+    final pcs = asList(_b['per_pc']);
     final perSales = asList(_b['per_sales']);
     final key = '${_filter.key}-${ymd(_tanggal)}-$_rev';
-    final judul = _sales != null
-        ? 'area ${_sales!['area']}'
-        : (_trainer != null ? 'Trainer ${_trainer!['trainer']}' : me.cakupan);
-
-    final sellOut = SellOutCard(hari: hari, bulan: bulan, target: target, hk: hk, judul: judul);
-    final produktivitas = ProduktivitasCard(data: asMap(_b['produktivitas']));
-    final laporan = LaporanPcCard(data: asMap(_b['laporan']), hariIni: hariIni, onTapPc: _bukaPc);
-    final stok = UpdateStokCard(data: asMap(_b['stok']), onTapToko: _bukaStok);
-    final hpIot = KontribusiHpIot(bulan: bulan);
-    final kategori = KontribusiKategori(key: ValueKey('kk-$key'), filter: _filter, tanggal: _tanggal);
-    final bayar = KontribusiBayar(key: ValueKey('kb-$key'), filter: _filter, tanggal: _tanggal);
-    final tipe = KontribusiTipe(key: ValueKey('kt-$key'), filter: _filter, tanggal: _tanggal);
-    final peringkat = PeringkatCard(
-      judul: 'Peringkat Sales',
-      rows: perSales,
-      hk: hk,
-      namaKey: 'sales',
-      idKey: 'sales_id',
-      keterangan: (r) => '${r['area'] ?? ''} · ${r['toko']} toko · ${r['pc']} PC'
-          '${r['trainer'] != null && _level == 'mt' ? ' · Trainer ${r['trainer']}' : ''} · NOSELL ${r['nosell'] ?? 0} hari',
-      onTap: _bukaSales,
-    );
-    final peringkatTrainer = PeringkatCard(
-      judul: 'Peringkat Trainer',
-      rows: asList(_b['per_trainer']),
-      hk: hk,
-      namaKey: 'trainer',
-      idKey: 'trainer_id',
-      keterangan: (r) => 'Sales: ${r['sales'] ?? '-'} · ${r['toko']} toko · ${r['pc']} PC · NOSELL ${r['nosell'] ?? 0} hari',
-      onTap: _bukaTrainer,
-    );
-    final sebaran = SebaranPcCard(pcs: asList(_b['per_pc']), onTapPc: _bukaPc);
-    final nosellPc = NosellPcCard(pcs: asList(_b['per_pc']), onTapPc: _bukaPc);
-    final nosellRekap = NosellRekapCard(
-      trainer: asList(_b['per_trainer']),
-      sales: perSales,
-      total: toNum(_b['nosell_total']),
-      onTapTrainer: _bukaTrainer,
-      onTapSales: _bukaSales,
-    );
-    final msArea = Card(
-      child: ListTile(
-        leading: const Icon(Icons.pie_chart),
-        title: const Text('MS Allbrand semua toko', style: TextStyle(fontWeight: FontWeight.bold)),
-        subtitle: const Text('Satu tabel: OPPO vs semua brand per toko · hari ini & todate'),
-        trailing: const Icon(Icons.chevron_right),
-        onTap: () => Navigator.of(context).push(MaterialPageRoute(
-          builder: (_) => MsAreaScreen(filter: _filter, tanggal: _tanggal, judul: judul),
-        )),
-      ),
-    );
-    final daftarPc = DaftarPcCard(rows: asList(_b['per_pc']), hk: hk, hariIni: hariIni, onTap: _bukaPc);
+    final judul = _judul;
 
     final out = <Widget>[
       Padding(
         padding: const EdgeInsets.only(bottom: 4),
         child: Text(hariTgl(_tanggal), style: const TextStyle(fontWeight: FontWeight.bold)),
       ),
-      TimegoneBar(hk: hk, tampilSisa: false),
-      ...switch (_level) {
-        // MT: semua area + peringkat per Sales
-        'mt' => [sellOut, peringkatTrainer, peringkat, nosellRekap, msArea, hpIot, kategori, bayar, tipe],
-        // Trainer: area Sales yang dipegang (gabungan & per Sales)
-        'trainer' => [sellOut, peringkat, sebaran, nosellPc, produktivitas, laporan, msArea, hpIot, kategori, bayar, tipe],
-        // Sales (atau MT/Trainer membuka satu Sales)
-        _ => [sellOut, daftarPc, nosellPc, stok, msArea, produktivitas, laporan, hpIot, kategori, bayar, tipe],
-      },
-      if (_level != 'sales') ...[
-        const SizedBox(height: 4),
-        ExpansionTile(
-          title: const Text('Semua PC di cakupan'),
-          subtitle: Text('${asList(_b['per_pc']).length} PC · update stok ${asMap(_b['stok'])['sudah'] ?? 0}/'
-              '${asMap(_b['stok'])['total'] ?? 0} toko'),
-          children: [daftarPc, stok],
-        ),
-      ],
     ];
+
+    if (!laporan) {
+      // ---------------- BERANDA: ringkasan pencapaian ----------------
+      out.addAll([
+        TimegoneBar(hk: hk, tampilSisa: false),
+        KalenderPenjualan(
+          key: ValueKey('kal-$key'),
+          selected: _tanggal,
+          filter: _filter,
+          onSelect: (d) {
+            setState(() => _tanggal = d);
+            _load();
+          },
+        ),
+        Padding(
+          padding: const EdgeInsets.only(bottom: 8),
+          child: OutlinedButton.icon(
+            onPressed: pcs.isEmpty ? null : _tambahPenjualan,
+            icon: const Icon(Icons.add_shopping_cart),
+            label: const Text('Tambah / koreksi penjualan PC'),
+            style: OutlinedButton.styleFrom(minimumSize: const Size.fromHeight(44)),
+          ),
+        ),
+        SellOutCard(hari: asMap(_b['hari']), bulan: asMap(_b['bulan']), target: asMap(_b['target']), hk: hk, judul: judul),
+        RingkasanGajiCard(key: ValueKey('gaji-$key'), filter: _filter, tanggal: _tanggal, onTapPc: _bukaPc),
+        KontribusiTipe(key: ValueKey('kt-$key'), filter: _filter, tanggal: _tanggal),
+        KontribusiHpIot(bulan: asMap(_b['bulan'])),
+        KontribusiBayar(key: ValueKey('kb-$key'), filter: _filter, tanggal: _tanggal),
+        KontribusiKategori(key: ValueKey('kk-$key'), filter: _filter, tanggal: _tanggal),
+      ]);
+    } else {
+      // ---------------- LAPORAN: pencapaian per Trainer / Sales / PC & status hari itu ----------------
+      final peringkatSales = PeringkatCard(
+        judul: 'Peringkat Sales',
+        rows: perSales,
+        hk: hk,
+        namaKey: 'sales',
+        idKey: 'sales_id',
+        keterangan: (r) => '${r['area'] ?? ''} · ${r['toko']} toko · ${r['pc']} PC'
+            '${r['trainer'] != null && _level == 'mt' ? ' · Trainer ${r['trainer']}' : ''} · NOSELL ${r['nosell'] ?? 0} hari',
+        onTap: _bukaSales,
+      );
+      final peringkatTrainer = PeringkatCard(
+        judul: 'Peringkat Trainer',
+        rows: asList(_b['per_trainer']),
+        hk: hk,
+        namaKey: 'trainer',
+        idKey: 'trainer_id',
+        keterangan: (r) => 'Sales: ${r['sales'] ?? '-'} · ${r['toko']} toko · ${r['pc']} PC · NOSELL ${r['nosell'] ?? 0} hari',
+        onTap: _bukaTrainer,
+      );
+      out.addAll([
+        if (_level == 'mt') ...[
+          peringkatTrainer,
+          peringkatSales,
+          NosellRekapCard(
+            trainer: asList(_b['per_trainer']),
+            sales: perSales,
+            total: toNum(_b['nosell_total']),
+            onTapTrainer: _bukaTrainer,
+            onTapSales: _bukaSales,
+          ),
+        ],
+        if (_level == 'trainer') ...[
+          peringkatSales,
+          SebaranPcCard(pcs: pcs, onTapPc: _bukaPc),
+        ],
+        DaftarPcCard(rows: pcs, hk: hk, hariIni: hariIni, onTap: _bukaPc),
+        StatusPcCard(pcs: pcs, onTapPc: _bukaPc),
+        ProduktivitasPcCard(pcs: pcs),
+        if (_level != 'mt') NosellPcCard(pcs: pcs, onTapPc: _bukaPc),
+        UpdateStokCard(data: asMap(_b['stok']), onTapToko: _bukaStok),
+        Card(
+          child: ListTile(
+            leading: const Icon(Icons.pie_chart),
+            title: const Text('MS Allbrand area', style: TextStyle(fontWeight: FontWeight.bold)),
+            subtitle: const Text('Satu tabel: OPPO vs semua brand per toko · hari ini & todate'),
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => Navigator.of(context).push(MaterialPageRoute(
+              builder: (_) => MsAreaScreen(filter: _filter, tanggal: _tanggal, judul: judul),
+            )),
+          ),
+        ),
+      ]);
+    }
     return RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(12), children: out));
   }
 
@@ -311,7 +349,7 @@ class _AtasanHomeState extends State<AtasanHome> {
           me.isTrainer ? 'Atur UMR, tier, potongan, bonus/denda, insentif wilayahmu' : 'Lihat aturan KPI per Trainer',
           const KpiScreen()),
       item(Icons.flag, 'Target bulanan', 'Target per toko dan per PC ($cak)', const TargetScreen()),
-      item(Icons.event_busy, 'Offday & izin PC', 'Jadwal offday/izin PC ($cak)', const OffdayScreen()),
+      item(Icons.event_busy, 'Kehadiran PC', 'Offday, izin, sakit PC ($cak)', const OffdayScreen()),
       item(Icons.store, 'Toko', 'Tambah, ubah, nonaktifkan toko ($cak)', const TokoScreen()),
       item(Icons.manage_accounts, 'PC', 'Tambah PC, tempatkan di toko, pindah, nonaktifkan, reset password',
           const AkunPcScreen()),
@@ -370,7 +408,7 @@ class PcDetailScreen extends StatelessWidget {
           Text('${pc.toko} · ${hariTgl(pc.tanggal)}', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal)),
         ]),
       ),
-      body: HariPcView(pc: pc),
+      body: HariPcView(pc: pc, bagian: BagianPc.semua),
     );
   }
 }

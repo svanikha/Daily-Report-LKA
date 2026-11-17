@@ -70,12 +70,14 @@ class _KalenderPenjualanState extends State<KalenderPenjualan> {
 
   bool get _satuToko => widget.filter.pcId != null;
 
-  /// NOSELL: hari kerja yang sudah lewat (atau hari ini jika dilaporkan nihil) tanpa penjualan HP & IoT.
-  bool _nosell(DateTime d, Map<String, dynamic>? r, DateTime today) {
-    if (!_satuToko || r == null || r['off'] == true || d.isAfter(today)) return false;
-    final kosong = toNum(r['unit']) == 0 && toNum(r['iot']) == 0;
-    if (!kosong) return false;
-    return d.isBefore(today) || r['nihil'] == true;
+  /// NOSELL (satu PC): tanggal yang diisi PC sebagai NOSELL di kalender penjualan.
+  bool _nosell(DateTime d, Map<String, dynamic>? r, DateTime today) =>
+      _satuToko && r != null && !d.isAfter(today) && r['nihil'] == true;
+
+  /// Label kehadiran PC (satu PC): OFF / IZIN / SAKIT.
+  String? _libur(Map<String, dynamic>? r) {
+    if (!_satuToko || r == null || r['off'] != true) return null;
+    return switch ('${r['libur'] ?? 'offday'}') { 'izin' => 'IZIN', 'sakit' => 'SAKIT', _ => 'OFF' };
   }
 
   @override
@@ -92,8 +94,12 @@ class _KalenderPenjualanState extends State<KalenderPenjualan> {
     for (var d = 1; d <= last.day; d++) {
       final tgl = DateTime(_bulan.year, _bulan.month, d);
       final r = _hari[ymd(tgl)];
-      if (_nosell(tgl, r, today)) nosell++;
-      if (_satuToko && r?['off'] == true) off++;
+      if (_satuToko) {
+        if (_nosell(tgl, r, today)) nosell++;
+        if (r?['off'] == true) off++;
+      } else {
+        nosell += toNum(r?['nosell']).toInt();
+      }
     }
     final primary = Theme.of(context).colorScheme.primary;
 
@@ -112,12 +118,13 @@ class _KalenderPenjualanState extends State<KalenderPenjualan> {
               icon: const Icon(Icons.chevron_right),
             ),
           ]),
-          if (_satuToko && !_loading && _error == null)
+          if (!_loading && _error == null)
             Padding(
               padding: const EdgeInsets.only(bottom: 6),
               child: Wrap(alignment: WrapAlignment.center, spacing: 6, runSpacing: 4, children: [
-                Pill('NOSELL $nosell hari', color: nosell > 0 ? Colors.red.shade700 : Colors.green.shade700),
-                if (off > 0) Pill('Offday $off hari', color: Colors.teal),
+                Pill(_satuToko ? 'NOSELL $nosell hari' : 'NOSELL $nosell PC-hari',
+                    color: nosell > 0 ? Colors.red.shade700 : Colors.green.shade700),
+                if (off > 0) Pill('Offday/izin/sakit $off hari', color: Colors.teal),
               ]),
             ),
           Row(children: [
@@ -149,7 +156,7 @@ class _KalenderPenjualanState extends State<KalenderPenjualan> {
             style: Theme.of(context).textTheme.bodySmall?.copyWith(fontWeight: FontWeight.w600),
           ),
           if (_satuToko)
-            Text('Merah = NOSELL (tidak ada penjualan HP & IoT) · Hijau tosca = offday',
+            Text('Merah = NOSELL (diisi PC) · Hijau tosca = offday / izin / sakit',
                 textAlign: TextAlign.center, style: Theme.of(context).textTheme.bodySmall),
         ]),
       ),
@@ -162,7 +169,9 @@ class _KalenderPenjualanState extends State<KalenderPenjualan> {
     final value = toNum(r?['value']);
     final future = d.isAfter(today);
     final sel = isSameDay(d, widget.selected);
-    final off = _satuToko && r?['off'] == true;
+    final libur = _libur(r);
+    final off = libur != null;
+    final ns = _satuToko ? 0 : toNum(r?['nosell']).toInt();
     final nosell = _nosell(d, r, today);
     final kuat = maxUnit > 0 ? (unit / maxUnit).clamp(0.0, 1.0).toDouble() : 0.0;
     final Color bg;
@@ -192,13 +201,15 @@ class _KalenderPenjualanState extends State<KalenderPenjualan> {
           Text('${d.day}', style: TextStyle(fontSize: 10, color: future ? Colors.grey : fg)),
           if (!future) ...[
             if (off)
-              const Text('OFF', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.teal))
+              Text(libur ?? 'OFF', style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.bold, color: Colors.teal))
             else if (nosell)
               const Text('NOSELL', style: TextStyle(fontSize: 8, fontWeight: FontWeight.bold, color: Color(0xFFB71C1C)))
             else
               Text('$unit', style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: fg)),
             if (!off && !nosell)
               Text(value > 0 ? rpRingkas(value) : '-', style: TextStyle(fontSize: 8.5, color: fg), maxLines: 1),
+            if (ns > 0)
+              Text('NS $ns', style: const TextStyle(fontSize: 8.5, fontWeight: FontWeight.bold, color: Color(0xFFB71C1C))),
           ],
         ]),
       ),

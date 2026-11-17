@@ -241,7 +241,7 @@ create table if not exists public.daily_reports (
 create table if not exists public.pc_day_status (
   pc_id uuid not null references public.profiles(id) on delete cascade,
   tanggal date not null,
-  status text not null check (status in ('offday', 'izin')),
+  status text not null check (status in ('offday', 'izin', 'sakit')),
   dibuat_oleh uuid references public.profiles(id),
   dibuat_pada timestamptz not null default now(),
   primary key (pc_id, tanggal)
@@ -1691,16 +1691,11 @@ begin
       from public.stores st join public.areas a on a.id = st.area_id join public.trainer_sales ts on ts.sales_id = a.sales_id
      where st.id in (select id from toko)
   ),
-  -- NOSELL bulan ini per PC: hari kerja (bukan offday/izin) tanpa penjualan HP & IoT.
-  -- Hari ini dihitung hanya jika PC menandai NOSELL. Dihitung sejak PC terdaftar.
+  -- NOSELL bulan ini per PC = tanggal yang diisi PC sebagai NOSELL di kalender penjualan.
   pc_ns as (
     select pc.id, pc.store_id,
-           (select count(*) from generate_series(pc.mulai, p_tanggal, interval '1 day') g(d)
-             where not exists (select 1 from s where s.pc_id = pc.id and s.tanggal = g.d::date)
-               and not exists (select 1 from public.pc_day_status ds where ds.pc_id = pc.id and ds.tanggal = g.d::date)
-               and (g.d::date < public.today_wib()
-                    or exists (select 1 from public.checkins c where c.pc_id = pc.id and c.tanggal = g.d::date and c.modul = 'penjualan'))
-           ) as nosell
+           (select count(*) from public.checkins c
+             where c.pc_id = pc.id and c.modul = 'penjualan' and c.tanggal between v_bulan and p_tanggal) as nosell
       from pc
   )
   select jsonb_build_object(
@@ -1799,6 +1794,9 @@ begin
           'unit_hari', coalesce((select sum(qty) from h where h.pc_id = pc.id and tipe = 'HP'), 0),
           'iot', coalesce((select sum(qty) from s where s.pc_id = pc.id and tipe = 'IOT'), 0),
           'nosell', (select nosell from pc_ns where pc_ns.id = pc.id),
+          'iot_hari', coalesce((select sum(qty) from h where h.pc_id = pc.id and tipe = 'IOT'), 0),
+          'nosell_hari', exists (select 1 from public.checkins c where c.pc_id = pc.id and c.tanggal = p_tanggal and c.modul = 'penjualan'),
+          'stok_hari', exists (select 1 from public.stok_update u where u.store_id = pc.store_id and u.tanggal = p_tanggal),
           'target_unit', (select nilai from public.pc_targets where pc_id = pc.id and bulan = v_bulan and jenis = 'unit'),
           'target_value', (select nilai from public.pc_targets where pc_id = pc.id and bulan = v_bulan and jenis = 'value'),
           'laporan_pada', (select dikirim_pada from public.daily_reports d where d.pc_id = pc.id and d.tanggal = p_tanggal),
@@ -1891,11 +1889,48 @@ language sql stable security definer set search_path = public as $$
                                      and c.store_id in (select id from toko)), 0),
            'lapor', (select count(*) from public.daily_reports d where d.tanggal = h.tanggal and d.pc_id in (select id from pcs)),
            'off', p_pc is not null and exists (select 1 from public.pc_day_status d where d.tanggal = h.tanggal and d.pc_id = p_pc),
+           'libur', (select d.status from public.pc_day_status d where p_pc is not null and d.tanggal = h.tanggal and d.pc_id = p_pc),
+           'nosell', (select count(*) from public.checkins c where c.tanggal = h.tanggal and c.modul = 'penjualan'
+                        and c.pc_id in (select id from pcs)),
            'nihil', p_pc is not null and exists (select 1 from public.checkins c where c.tanggal = h.tanggal
                                                     and c.modul = 'penjualan' and c.pc_id = p_pc)
          ) order by h.tanggal), '[]'::jsonb)
     from hari h
 $$;
+
+-- Total insentif hari ini dan estimasi gaji semua PC di cakupan (beranda MT / Trainer / Sales)
+create or replace function public.ringkasan_gaji(p_tanggal date, p_sales uuid default null, p_store int default null,
+                                                 p_pc uuid default null, p_trainer uuid default null) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  p record;
+  e jsonb; i jsonb;
+  v_rows jsonb := '[]'::jsonb;
+  t_ins numeric := 0; t_gaji numeric := 0; n int := 0;
+begin
+  if not public.is_atasan() then raise exception 'Akses ditolak'; end if;
+  for p in
+    select x.id, x.nama, s.nama as toko from public.profiles x join public.stores s on s.id = x.store_id
+     where x.id in (select public.pc_filter(p_sales, p_store, p_pc, p_trainer))
+     order by x.nama
+  loop
+    begin
+      e := public.estimasi_gaji(p.id, p_tanggal);
+      i := public.insentif_harian(p.id, p_tanggal);
+    exception when others then
+      continue;
+    end;
+    if coalesce((e->>'ada_aturan')::boolean, false) then
+      n := n + 1;
+      t_gaji := t_gaji + coalesce((e->>'total')::numeric, 0);
+      t_ins := t_ins + coalesce((i->>'total_hp_tier')::numeric, 0) + coalesce((i->>'total_iot')::numeric, 0);
+      v_rows := v_rows || jsonb_build_array(jsonb_build_object(
+        'pc_id', p.id, 'pc', p.nama, 'toko', p.toko, 'tier', e->>'tier', 'gaji', (e->>'total')::numeric,
+        'insentif_hari', coalesce((i->>'total_hp_tier')::numeric, 0) + coalesce((i->>'total_iot')::numeric, 0)));
+    end if;
+  end loop;
+  return jsonb_build_object('pc', n, 'insentif_hari', round(t_ins), 'estimasi_gaji', round(t_gaji), 'rows', v_rows);
+end $$;
 
 -- MS Allbrand semua toko di cakupan dalam satu tabel: OPPO (unit HP) vs tiap brand, hari ini & todate.
 create or replace function public.ms_area(p_tanggal date, p_sales uuid default null, p_store int default null,

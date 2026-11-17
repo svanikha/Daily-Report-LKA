@@ -5,7 +5,7 @@ import '../../utils.dart';
 import '../../widgets/cakupan_data.dart';
 import '../../widgets/widgets.dart';
 
-/// Jadwal offday & izin PC per minggu. MT: semua PC. Trainer & Sales: PC di cakupannya.
+/// Kehadiran PC per minggu (offday, izin, sakit). MT: semua PC. Trainer & Sales: PC di cakupannya.
 class OffdayScreen extends StatefulWidget {
   const OffdayScreen({super.key});
 
@@ -63,7 +63,7 @@ class _OffdayScreenState extends State<OffdayScreen> {
   Future<void> _cycle(String pcId, DateTime d) async {
     final key = '$pcId|${ymd(d)}';
     final now = _status[key];
-    final next = now == null ? 'offday' : (now == 'offday' ? 'izin' : null);
+    final next = switch (now) { null => 'offday', 'offday' => 'izin', 'izin' => 'sakit', _ => null };
     setState(() {
       if (next == null) {
         _status.remove(key);
@@ -122,7 +122,7 @@ class _OffdayScreenState extends State<OffdayScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('Jadwal offday & izin'),
+        title: const Text('Kehadiran PC'),
         actions: [IconButton(onPressed: _copyPrevWeek, icon: const Icon(Icons.copy_all), tooltip: 'Salin dari minggu lalu')],
       ),
       body: _loading
@@ -156,8 +156,9 @@ class _OffdayScreenState extends State<OffdayScreen> {
                       child: AreaDropdown(
                           areas: _areas, value: _area, bolehSemua: true, onChanged: (v) => setState(() => _area = v)),
                     ),
-                  const InfoBanner('Ketuk kotak: kosong (kerja) → Offday → Izin → kosong. '
-                      'Di hari offday/izin PC full off: tidak wajib lapor dan tidak dihitung "tidak lapor".'),
+                  const InfoBanner('Ketuk kotak: kosong (kerja) → Offday → Izin → Sakit → kosong. '
+                      'Hari offday/izin/sakit tidak wajib lapor dan tidak dihitung hari kerja, jadi target harian PC '
+                      'dibagi ke hari kerja yang tersisa.'),
                   Card(
                     child: Padding(
                       padding: const EdgeInsets.all(8),
@@ -199,7 +200,12 @@ class _OffdayScreenState extends State<OffdayScreen> {
 
   Widget _cell(String pcId, DateTime d) {
     final s = _status['$pcId|${ymd(d)}'];
-    final color = s == 'offday' ? Colors.teal : (s == 'izin' ? Colors.orange.shade700 : Colors.grey.shade200);
+    final color = switch (s) {
+      'offday' => Colors.teal,
+      'izin' => Colors.orange.shade700,
+      'sakit' => Colors.purple.shade400,
+      _ => Colors.grey.shade200,
+    };
     return InkWell(
       onTap: () => _cycle(pcId, d),
       child: Container(
@@ -207,7 +213,7 @@ class _OffdayScreenState extends State<OffdayScreen> {
         margin: const EdgeInsets.all(2),
         alignment: Alignment.center,
         decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6)),
-        child: Text(s == 'offday' ? 'Off' : (s == 'izin' ? 'Izin' : ''),
+        child: Text(switch (s) { 'offday' => 'Off', 'izin' => 'Izin', 'sakit' => 'Sakit', _ => '' },
             style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold)),
       ),
     );

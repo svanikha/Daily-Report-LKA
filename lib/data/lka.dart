@@ -160,4 +160,7 @@ class PcHari {
   String get alasanTerkunci => 'Input PC hanya untuk hari ini sampai pukul $batasLaporanText WIB.';
 }
 
+/// Label kehadiran PC: OFFDAY / IZIN / SAKIT.
+String labelLibur(String status) => switch (status) { 'izin' => 'IZIN', 'sakit' => 'SAKIT', _ => 'OFFDAY' };
+
 String jamMenit(DateTime d) => '${d.hour.toString().padLeft(2, '0')}.${d.minute.toString().padLeft(2, '0')}';

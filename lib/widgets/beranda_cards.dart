@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../data/lka.dart';
 import '../services/presence_service.dart';
+import '../services/session.dart';
 import '../utils.dart';
 import 'sell_out_card.dart';
 import 'status_online.dart';
@@ -407,7 +408,7 @@ class DaftarPcCard extends StatelessWidget {
     if (lap != null) {
       pill = Pill('Lapor ${jamMenit(lap)}', color: Colors.green.shade700);
     } else if (libur != null) {
-      pill = Pill(libur == 'izin' ? 'Izin' : 'Offday', color: Colors.teal);
+      pill = Pill(labelLibur(libur), color: Colors.teal);
     } else if (!hariIni || lewatBatasLaporan()) {
       pill = Pill('Tidak lapor', color: Colors.red.shade700);
     } else {
@@ -563,6 +564,234 @@ class NosellRekapCard extends StatelessWidget {
           _bagian('Per wilayah Trainer', trainer, 'trainer', onTapTrainer),
           const Divider(),
           _bagian('Per area Sales', sales, 'sales', onTapSales),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Status setiap PC hari itu dalam satu daftar: laporan, update stok (toko), penjualan, dan lampu online.
+/// PC yang masih ada kekurangan tampil paling atas.
+class StatusPcCard extends StatefulWidget {
+  final List<Map<String, dynamic>> pcs;
+  final void Function(Map<String, dynamic> pc) onTapPc;
+  const StatusPcCard({super.key, required this.pcs, required this.onTapPc});
+
+  @override
+  State<StatusPcCard> createState() => _StatusPcCardState();
+}
+
+class _StatusPcCardState extends State<StatusPcCard> {
+  bool _semua = false;
+
+  static bool _lapor(Map<String, dynamic> p) => p['laporan_pada'] != null;
+  static bool _stok(Map<String, dynamic> p) => p['stok_hari'] == true;
+  static bool _jual(Map<String, dynamic> p) =>
+      toNum(p['unit_hari']) + toNum(p['iot_hari']) > 0 || p['nosell_hari'] == true;
+  static int _kurang(Map<String, dynamic> p) =>
+      p['libur'] != null ? -1 : [_lapor(p), _stok(p), _jual(p)].where((x) => !x).length;
+
+  @override
+  Widget build(BuildContext context) {
+    final list = [...widget.pcs]..sort((a, b) {
+        final k = _kurang(b).compareTo(_kurang(a));
+        return k != 0 ? k : '${a['pc']}'.compareTo('${b['pc']}');
+      });
+    final kurang = list.where((p) => _kurang(p) > 0).length;
+    final tampil = _semua ? list : list.where((p) => _kurang(p) > 0).toList();
+    Widget chip(String label, bool ok) =>
+        Pill('$label ${ok ? '✓' : '✗'}', color: ok ? Colors.green.shade700 : Colors.red.shade700);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          judulKartu(context, Icons.checklist, 'Status PC hari ini',
+              sub: 'Belum lapor · belum update stok · belum jual (atau NOSELL)',
+              trailing: Text('$kurang/${list.length}',
+                  style: TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: kurang > 0 ? Colors.red.shade700 : Colors.green.shade700))),
+          if (kurang == 0 && !_semua)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Text('Semua PC sudah lapor, update stok, dan input penjualan ✓',
+                  style: TextStyle(color: Colors.green.shade700)),
+            ),
+          for (final p in tampil)
+            InkWell(
+              onTap: () => widget.onTapPc(p),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(children: [
+                  LampuOnline(
+                    online: StatusOnline.dari(
+                      {'last_seen': p['last_seen'], 'logged_in': p['logged_in'], 'auth_uid': p['sudah_daftar'] == true ? 'ada' : null},
+                      parseWib,
+                    ).online,
+                    size: 10,
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('${p['pc']}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                      Text('${p['toko']}', style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
+                      const SizedBox(height: 3),
+                      if (p['libur'] != null)
+                        Pill(labelLibur('${p['libur']}'), color: Colors.teal)
+                      else
+                        Wrap(spacing: 4, runSpacing: 4, children: [
+                          chip('Lapor', _lapor(p)),
+                          chip('Stok', _stok(p)),
+                          p['nosell_hari'] == true ? Pill('NOSELL', color: Colors.orange.shade800) : chip('Jual', _jual(p)),
+                        ]),
+                    ]),
+                  ),
+                ]),
+              ),
+            ),
+          TextButton(
+            onPressed: () => setState(() => _semua = !_semua),
+            child: Text(_semua ? 'Tampilkan yang belum lengkap saja' : 'Tampilkan semua PC (${list.length})'),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Produktivitas PC hari itu: sudah jualan, masih NOSELL / belum jual, offday-izin-sakit.
+class ProduktivitasPcCard extends StatelessWidget {
+  final List<Map<String, dynamic>> pcs;
+  const ProduktivitasPcCard({super.key, required this.pcs});
+
+  @override
+  Widget build(BuildContext context) {
+    final off = pcs.where((p) => p['libur'] != null).length;
+    final jual = pcs.where((p) => p['libur'] == null && toNum(p['unit_hari']) + toNum(p['iot_hari']) > 0).length;
+    final nosell = pcs.length - off - jual;
+    final tugas = pcs.length - off;
+    Widget kotak(String label, int n, Color c, String sub) => Expanded(
+          child: Container(
+            margin: const EdgeInsets.symmetric(horizontal: 3),
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: c.withValues(alpha: 0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: c.withValues(alpha: 0.3)),
+            ),
+            child: Column(children: [
+              Text('$n', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: c)),
+              Text(label, textAlign: TextAlign.center, style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w600)),
+              Text(sub, textAlign: TextAlign.center, style: TextStyle(fontSize: 10.5, color: Colors.grey.shade700)),
+            ]),
+          ),
+        );
+    String persen(int n) => tugas > 0 ? '${(n / tugas * 100).toStringAsFixed(0)}% PC bertugas' : '-';
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          judulKartu(context, Icons.trending_up, 'Produktivitas PC', sub: 'Hari itu · total ${pcs.length} PC'),
+          Row(children: [
+            kotak('Sudah jualan', jual, Colors.green.shade700, persen(jual)),
+            kotak('NOSELL / belum jual', nosell, Colors.red.shade700, persen(nosell)),
+            kotak('Offday / izin / sakit', off, Colors.teal, 'tidak dihitung'),
+          ]),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Total insentif hari ini & estimasi gaji semua PC di cakupan (RPC ringkasan_gaji).
+class RingkasanGajiCard extends StatefulWidget {
+  final Cakupan filter;
+  final DateTime tanggal;
+  final void Function(Map<String, dynamic> pc) onTapPc;
+  const RingkasanGajiCard({super.key, required this.filter, required this.tanggal, required this.onTapPc});
+
+  @override
+  State<RingkasanGajiCard> createState() => _RingkasanGajiCardState();
+}
+
+class _RingkasanGajiCardState extends State<RingkasanGajiCard> {
+  Map<String, dynamic>? _r;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    try {
+      final r = asMap(
+          await Session.db.rpc('ringkasan_gaji', params: {'p_tanggal': ymd(widget.tanggal), ...widget.filter.params}));
+      if (mounted) setState(() => _r = r);
+    } catch (e) {
+      if (mounted) setState(() => _error = errMsg(e));
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final r = _r;
+    if (_error != null) {
+      return Card(
+          child: ListTile(leading: const Icon(Icons.payments), title: const Text('Insentif & gaji'), subtitle: Text(_error!)));
+    }
+    if (r == null) return const Card(child: Padding(padding: EdgeInsets.all(16), child: LinearProgressIndicator()));
+    final rows = asList(r['rows'])..sort((a, b) => toNum(b['gaji']).compareTo(toNum(a['gaji'])));
+    final n = toNum(r['pc']);
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 0),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          judulKartu(context, Icons.payments, 'Insentif & estimasi gaji PC', sub: '${angka(n)} PC dengan aturan KPI'),
+          Row(children: [
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Insentif hari ini', style: TextStyle(fontSize: 12)),
+                Text(rupiah(toNum(r['insentif_hari'])),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.teal.shade700)),
+              ]),
+            ),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Text('Estimasi gaji bulan ini', style: TextStyle(fontSize: 12)),
+                Text(rupiahSingkat(toNum(r['estimasi_gaji'])),
+                    style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Theme.of(context).colorScheme.primary)),
+                Text(n > 0 ? 'rata-rata ${rupiahSingkat(toNum(r['estimasi_gaji']) / n)} / PC' : '',
+                    style: const TextStyle(fontSize: 11)),
+              ]),
+            ),
+          ]),
+          Theme(
+            data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+            child: ExpansionTile(
+              tilePadding: EdgeInsets.zero,
+              title: const Text('Rincian per PC', style: TextStyle(fontSize: 13)),
+              children: [
+                for (final p in rows)
+                  ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    title: Text('${p['pc']}'),
+                    subtitle: Text('${p['toko']}${p['tier'] != null ? ' · ${p['tier']}' : ''}'),
+                    trailing: Column(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(rupiah(toNum(p['gaji'])), style: const TextStyle(fontWeight: FontWeight.bold)),
+                          Text('hari ini +${rupiah(toNum(p['insentif_hari']))}', style: const TextStyle(fontSize: 10.5)),
+                        ]),
+                    onTap: () => widget.onTapPc(p),
+                  ),
+              ],
+            ),
+          ),
         ]),
       ),
     );
