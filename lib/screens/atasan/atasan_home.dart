@@ -44,14 +44,19 @@ class _AtasanHomeState extends State<AtasanHome> {
   int _rev = 0;
   Timer? _refresh;
 
-  /// MT / Trainer bisa membuka beranda versi satu Sales.
+  /// MT bisa membuka beranda versi satu Trainer; MT / Trainer bisa membuka versi satu Sales.
+  Map<String, dynamic>? _trainer;
   Map<String, dynamic>? _sales;
 
   Profile get me => Session.current!;
-  Cakupan get _filter => Cakupan(salesId: _sales?['sales_id'] as String?);
+  Cakupan get _filter => Cakupan(
+        trainerId: _trainer?['trainer_id'] as String?,
+        salesId: _sales?['sales_id'] as String?,
+      );
 
   /// Tampilan yang dipakai: 'mt', 'trainer', atau 'sales'
-  String get _level => _sales != null ? 'sales' : me.role;
+  String get _level => _sales != null ? 'sales' : (_trainer != null ? 'trainer' : me.role);
+  bool get _bisaKembali => _sales != null || _trainer != null;
 
   @override
   void initState() {
@@ -111,6 +116,24 @@ class _AtasanHomeState extends State<AtasanHome> {
     _load();
   }
 
+  void _bukaTrainer(Map<String, dynamic>? t) {
+    setState(() {
+      _trainer = t;
+      _sales = null;
+      _b = {};
+    });
+    _load();
+  }
+
+  /// Kembali satu tingkat: Sales -> Trainer (jika dibuka dari Trainer) -> beranda awal.
+  void _kembali() {
+    if (_sales != null) {
+      _bukaSales(null);
+    } else {
+      _bukaTrainer(null);
+    }
+  }
+
   Future<void> _bukaPc(Map<String, dynamic> r) async {
     final pc = await PcDetailScreen.muat(context, '${r['pc_id']}', _tanggal);
     if (pc == null || !mounted) return;
@@ -135,17 +158,19 @@ class _AtasanHomeState extends State<AtasanHome> {
   @override
   Widget build(BuildContext context) {
     return PopScope(
-      canPop: _sales == null || _tab != 0,
+      canPop: !_bisaKembali || _tab != 0,
       onPopInvokedWithResult: (didPop, _) {
-        if (!didPop) _bukaSales(null);
+        if (!didPop) _kembali();
       },
       child: Scaffold(
         appBar: AppBar(
-          leading: _sales != null && _tab == 0
-              ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: () => _bukaSales(null))
-              : null,
+          leading: _bisaKembali && _tab == 0 ? IconButton(icon: const Icon(Icons.arrow_back), onPressed: _kembali) : null,
           title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text(_tab == 0 ? (_sales != null ? 'Sales ${_sales!['sales']}' : 'Beranda') : 'Kelola'),
+            Text(_tab != 0
+                ? 'Kelola'
+                : (_sales != null
+                    ? 'Sales ${_sales!['sales']}'
+                    : (_trainer != null ? 'Trainer ${_trainer!['trainer']}' : 'Beranda'))),
             Text('${me.nama} · ${me.roleLabel} · ${me.cakupan}',
                 style: const TextStyle(fontSize: 12, fontWeight: FontWeight.normal)),
           ]),
@@ -181,7 +206,9 @@ class _AtasanHomeState extends State<AtasanHome> {
     final target = asMap(_b['target']);
     final perSales = asList(_b['per_sales']);
     final key = '${_filter.key}-${ymd(_tanggal)}-$_rev';
-    final judul = _sales != null ? 'area ${_sales!['area']}' : me.cakupan;
+    final judul = _sales != null
+        ? 'area ${_sales!['area']}'
+        : (_trainer != null ? 'Trainer ${_trainer!['trainer']}' : me.cakupan);
 
     final sellOut = SellOutCard(hari: hari, bulan: bulan, target: target, hk: hk, judul: judul);
     final produktivitas = ProduktivitasCard(data: asMap(_b['produktivitas']));
@@ -191,7 +218,26 @@ class _AtasanHomeState extends State<AtasanHome> {
     final kategori = KontribusiKategori(key: ValueKey('kk-$key'), filter: _filter, tanggal: _tanggal);
     final bayar = KontribusiBayar(key: ValueKey('kb-$key'), filter: _filter, tanggal: _tanggal);
     final tipe = KontribusiTipe(key: ValueKey('kt-$key'), filter: _filter, tanggal: _tanggal);
-    final peringkat = PeringkatSalesCard(rows: perSales, hk: hk, onTap: _bukaSales);
+    final peringkat = PeringkatCard(
+      judul: 'Peringkat Sales',
+      rows: perSales,
+      hk: hk,
+      namaKey: 'sales',
+      idKey: 'sales_id',
+      keterangan: (r) => '${r['area'] ?? ''} · ${r['toko']} toko · ${r['pc']} PC'
+          '${r['trainer'] != null && _level == 'mt' ? ' · Trainer ${r['trainer']}' : ''}',
+      onTap: _bukaSales,
+    );
+    final peringkatTrainer = PeringkatCard(
+      judul: 'Peringkat Trainer',
+      rows: asList(_b['per_trainer']),
+      hk: hk,
+      namaKey: 'trainer',
+      idKey: 'trainer_id',
+      keterangan: (r) => 'Sales: ${r['sales'] ?? '-'} · ${r['toko']} toko · ${r['pc']} PC',
+      onTap: _bukaTrainer,
+    );
+    final sebaran = SebaranPcCard(pcs: asList(_b['per_pc']), onTapPc: _bukaPc);
     final daftarPc = DaftarPcCard(rows: asList(_b['per_pc']), hk: hk, hariIni: hariIni, onTap: _bukaPc);
 
     final out = <Widget>[
@@ -202,9 +248,9 @@ class _AtasanHomeState extends State<AtasanHome> {
       TimegoneBar(hk: hk, tampilSisa: false),
       ...switch (_level) {
         // MT: semua area + peringkat per Sales
-        'mt' => [sellOut, peringkat, hpIot, kategori, bayar, tipe],
+        'mt' => [sellOut, peringkatTrainer, peringkat, hpIot, kategori, bayar, tipe],
         // Trainer: area Sales yang dipegang (gabungan & per Sales)
-        'trainer' => [sellOut, peringkat, produktivitas, laporan, hpIot, kategori, bayar, tipe],
+        'trainer' => [sellOut, peringkat, sebaran, produktivitas, laporan, hpIot, kategori, bayar, tipe],
         // Sales (atau MT/Trainer membuka satu Sales)
         _ => [sellOut, daftarPc, stok, produktivitas, laporan, hpIot, kategori, bayar, tipe],
       },

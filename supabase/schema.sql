@@ -1604,35 +1604,38 @@ end $$;
 -- 11. RPC BERANDA ATASAN (kartu bersama)
 -- Filter: p_sales (satu Sales), p_store (satu toko), p_pc (satu PC). Semua null = seluruh cakupan.
 -- ---------------------------------------------------------------------
-create or replace function public.toko_filter(p_sales uuid, p_store int, p_pc uuid) returns setof int
+create or replace function public.toko_filter(p_sales uuid, p_store int, p_pc uuid, p_trainer uuid default null)
+returns setof int
 language sql stable security definer set search_path = public as $$
   select s.id from public.stores s join public.areas a on a.id = s.area_id
    where s.aktif and public.can_view_store(s.id)
      and (p_sales is null or a.sales_id = p_sales)
      and (p_store is null or s.id = p_store)
      and (p_pc is null or s.id = public.pc_store(p_pc))
+     and (p_trainer is null or a.sales_id in (select ts.sales_id from public.trainer_sales ts where ts.trainer_id = p_trainer))
 $$;
 
-create or replace function public.pc_filter(p_sales uuid, p_store int, p_pc uuid) returns setof uuid
+create or replace function public.pc_filter(p_sales uuid, p_store int, p_pc uuid, p_trainer uuid default null)
+returns setof uuid
 language sql stable security definer set search_path = public as $$
   select p.id from public.profiles p
-   where p.role = 'pc' and p.aktif and p.store_id in (select public.toko_filter(p_sales, p_store, p_pc))
+   where p.role = 'pc' and p.aktif and p.store_id in (select public.toko_filter(p_sales, p_store, p_pc, p_trainer))
      and (p_pc is null or p.id = p_pc)
      and (public.my_role() <> 'pc' or p.id = public.my_profile_id())
 $$;
 
 create or replace function public.beranda(p_tanggal date, p_sales uuid default null, p_store int default null,
-                                          p_pc uuid default null) returns jsonb
+                                          p_pc uuid default null, p_trainer uuid default null) returns jsonb
 language plpgsql stable security definer set search_path = public as $$
 declare
   v_bulan date := date_trunc('month', p_tanggal)::date;
   r jsonb;
 begin
   if not public.is_atasan() then raise exception 'Akses ditolak'; end if;
-  with toko as (select public.toko_filter(p_sales, p_store, p_pc) as id),
+  with toko as (select public.toko_filter(p_sales, p_store, p_pc, p_trainer) as id),
   pc as (
     select p.id, p.nama, p.store_id, (select d.status from public.pc_day_status d where d.pc_id = p.id and d.tanggal = p_tanggal) as libur
-      from public.profiles p where p.id in (select public.pc_filter(p_sales, p_store, p_pc))
+      from public.profiles p where p.id in (select public.pc_filter(p_sales, p_store, p_pc, p_trainer))
   ),
   s as (
     select x.* from public.sales x
@@ -1647,7 +1650,12 @@ begin
                       where pp.store_id = t.id and pp.aktif and pt.bulan = v_bulan and pt.jenis = j.jenis), 0) as nilai
       from toko t cross join (values ('unit'), ('value'), ('fokus'), ('iot'), ('iot_value')) j(jenis)
   ),
-  bertugas as (select * from pc where libur is null)
+  bertugas as (select * from pc where libur is null),
+  tt_toko as (   -- toko per Trainer (lewat Sales area toko)
+    select ts.trainer_id, st.id as store_id
+      from public.stores st join public.areas a on a.id = st.area_id join public.trainer_sales ts on ts.sales_id = a.sales_id
+     where st.id in (select id from toko)
+  )
   select jsonb_build_object(
     'hari', jsonb_build_object(
       'unit', coalesce((select sum(qty) from h where tipe = 'HP'), 0),
@@ -1701,12 +1709,37 @@ begin
                                     where t.jenis = 'unit' and aa.sales_id is not distinct from a.sales_id), 0),
           'target_value', coalesce((select sum(t.nilai) from tgt_toko t join public.stores st on st.id = t.store_id join public.areas aa on aa.id = st.area_id
                                      where t.jenis = 'value' and aa.sales_id is not distinct from a.sales_id), 0),
+          'fokus', coalesce((select sum(qty) from s join public.stores st on st.id = s.store_id join public.areas aa on aa.id = st.area_id
+                              where s.fokus is not null and aa.sales_id is not distinct from a.sales_id), 0),
+          'target_fokus', coalesce((select sum(t.nilai) from tgt_toko t join public.stores st on st.id = t.store_id join public.areas aa on aa.id = st.area_id
+                                     where t.jenis = 'fokus' and aa.sales_id is not distinct from a.sales_id), 0),
+          'iot', coalesce((select sum(qty) from s join public.stores st on st.id = s.store_id join public.areas aa on aa.id = st.area_id
+                            where s.tipe = 'IOT' and aa.sales_id is not distinct from a.sales_id), 0),
+          'target_iot', coalesce((select sum(t.nilai) from tgt_toko t join public.stores st on st.id = t.store_id join public.areas aa on aa.id = st.area_id
+                                   where t.jenis = 'iot' and aa.sales_id is not distinct from a.sales_id), 0),
           'toko', count(distinct st0.id),
           'pc', (select count(*) from pc join public.stores st on st.id = pc.store_id join public.areas aa on aa.id = st.area_id
                   where aa.sales_id is not distinct from a.sales_id)) as x
           from public.stores st0 join public.areas a on a.id = st0.area_id
          where st0.id in (select id from toko)
          group by a.sales_id) y),
+    'per_trainer', (select coalesce(jsonb_agg(x order by (x->>'value')::numeric desc), '[]'::jsonb) from (
+        select jsonb_build_object(
+          'trainer_id', tt.trainer_id,
+          'trainer', (select nama from public.profiles where id = tt.trainer_id),
+          'sales', (select string_agg(p.nama, ', ' order by p.nama) from public.trainer_sales x join public.profiles p on p.id = x.sales_id
+                     where x.trainer_id = tt.trainer_id),
+          'unit', coalesce((select sum(qty) from s where s.tipe = 'HP' and s.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
+          'value', coalesce((select sum(subtotal) from s where s.tipe = 'HP' and s.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
+          'fokus', coalesce((select sum(qty) from s where s.fokus is not null and s.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
+          'target_unit', coalesce((select sum(nilai) from tgt_toko t where t.jenis = 'unit' and t.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
+          'target_value', coalesce((select sum(nilai) from tgt_toko t where t.jenis = 'value' and t.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
+          'target_fokus', coalesce((select sum(nilai) from tgt_toko t where t.jenis = 'fokus' and t.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
+          'iot', coalesce((select sum(qty) from s where s.tipe = 'IOT' and s.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
+          'target_iot', coalesce((select sum(nilai) from tgt_toko t where t.jenis = 'iot' and t.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id)), 0),
+          'toko', (select count(*) from tt_toko where trainer_id = tt.trainer_id),
+          'pc', (select count(*) from pc where pc.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id))) as x
+          from (select distinct trainer_id from tt_toko) tt) y),
     'per_pc', (select coalesce(jsonb_agg(x order by (x->>'value')::numeric desc, x->>'pc'), '[]'::jsonb) from (
         select jsonb_build_object(
           'pc_id', pc.id, 'pc', pc.nama, 'store_id', pc.store_id, 'toko', st.nama, 'libur', pc.libur,
@@ -1725,7 +1758,7 @@ end $$;
 
 -- Kontribusi per series & tipe (tgl 1 s.d. p_tanggal)
 create or replace function public.kontribusi_tipe(p_tanggal date, p_sales uuid default null, p_store int default null,
-                                                  p_pc uuid default null) returns jsonb
+                                                  p_pc uuid default null, p_trainer uuid default null) returns jsonb
 language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(jsonb_build_object(
            'tipe', tipe, 'grup', grup, 'nama', nama, 'unit', unit, 'value', value, 'unit_hari', unit_hari)
@@ -1737,7 +1770,7 @@ language sql stable security definer set search_path = public as $$
              case x.grup when 'A Series' then 1 when 'Reno Series' then 2 when 'Find Series' then 3 else 9 end as urutan_grup
         from public.sales x
        where x.tanggal between date_trunc('month', p_tanggal)::date and p_tanggal
-         and x.store_id in (select public.toko_filter(p_sales, p_store, p_pc))
+         and x.store_id in (select public.toko_filter(p_sales, p_store, p_pc, p_trainer))
          and (p_pc is null or x.pc_id = p_pc)
          and public.can_view_pc(x.pc_id)
        group by 1, 2, 3, 7
@@ -1746,7 +1779,7 @@ $$;
 
 -- Kategori user (Walk-in / Databased / Online)
 create or replace function public.kontribusi_kategori(p_tanggal date, p_sales uuid default null, p_store int default null,
-                                                      p_pc uuid default null) returns jsonb
+                                                      p_pc uuid default null, p_trainer uuid default null) returns jsonb
 language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(jsonb_build_object('tipe', tipe, 'kategori', kategori, 'unit', unit, 'value', value,
                                                'unit_hari', unit_hari)), '[]'::jsonb)
@@ -1756,7 +1789,7 @@ language sql stable security definer set search_path = public as $$
              coalesce(sum(x.qty) filter (where x.tanggal = p_tanggal), 0) as unit_hari
         from public.sales x
        where x.tanggal between date_trunc('month', p_tanggal)::date and p_tanggal
-         and x.store_id in (select public.toko_filter(p_sales, p_store, p_pc))
+         and x.store_id in (select public.toko_filter(p_sales, p_store, p_pc, p_trainer))
          and (p_pc is null or x.pc_id = p_pc)
          and public.can_view_pc(x.pc_id)
        group by 1, 2
@@ -1765,7 +1798,8 @@ $$;
 
 -- Cash (Transfer/Tunai) / Kredit per leasing, rentang tanggal
 create or replace function public.kontribusi_bayar(p_dari date, p_sampai date, p_sales uuid default null,
-                                                   p_store int default null, p_pc uuid default null) returns jsonb
+                                                   p_store int default null, p_pc uuid default null,
+                                                   p_trainer uuid default null) returns jsonb
 language sql stable security definer set search_path = public as $$
   select coalesce(jsonb_agg(jsonb_build_object(
            'tipe', tipe, 'metode', metode, 'cara_bayar', cara_bayar, 'unit', unit, 'value', value)
@@ -1775,7 +1809,7 @@ language sql stable security definer set search_path = public as $$
              sum(s.qty) as unit, sum(s.subtotal) as value
         from public.sales s
        where s.tanggal between p_dari and p_sampai
-         and s.store_id in (select public.toko_filter(p_sales, p_store, p_pc))
+         and s.store_id in (select public.toko_filter(p_sales, p_store, p_pc, p_trainer))
          and (p_pc is null or s.pc_id = p_pc)
          and public.can_view_pc(s.pc_id)
        group by 1, 2, 3
@@ -1784,10 +1818,10 @@ $$;
 
 -- Kalender penjualan satu bulan (cakupan / Sales / toko / PC)
 create or replace function public.kalender_penjualan(p_bulan date, p_sales uuid default null, p_store int default null,
-                                                     p_pc uuid default null) returns jsonb
+                                                     p_pc uuid default null, p_trainer uuid default null) returns jsonb
 language sql stable security definer set search_path = public as $$
-  with toko as (select public.toko_filter(p_sales, p_store, p_pc) as id),
-  pcs as (select public.pc_filter(p_sales, p_store, p_pc) as id),
+  with toko as (select public.toko_filter(p_sales, p_store, p_pc, p_trainer) as id),
+  pcs as (select public.pc_filter(p_sales, p_store, p_pc, p_trainer) as id),
   hari as (
     select generate_series(date_trunc('month', p_bulan)::date,
                            (date_trunc('month', p_bulan) + interval '1 month - 1 day')::date,

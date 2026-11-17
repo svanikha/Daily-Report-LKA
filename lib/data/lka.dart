@@ -72,14 +72,16 @@ const targetDefs = [
 
 /// Filter data beranda & kartu bersama. Semua null = seluruh cakupan akun.
 class Cakupan {
+  final String? trainerId;
   final String? salesId;
   final int? storeId;
   final String? pcId;
-  const Cakupan({this.salesId, this.storeId, this.pcId});
+  const Cakupan({this.trainerId, this.salesId, this.storeId, this.pcId});
 
-  Map<String, dynamic> get params => {'p_sales': salesId, 'p_store': storeId, 'p_pc': pcId};
-  String get key => '${salesId ?? ''}|${storeId ?? ''}|${pcId ?? ''}';
-  bool get semua => salesId == null && storeId == null && pcId == null;
+  Map<String, dynamic> get params =>
+      {'p_sales': salesId, 'p_store': storeId, 'p_pc': pcId, if (trainerId != null) 'p_trainer': trainerId};
+  String get key => '${trainerId ?? ''}|${salesId ?? ''}|${storeId ?? ''}|${pcId ?? ''}';
+  bool get semua => trainerId == null && salesId == null && storeId == null && pcId == null;
 
   @override
   bool operator ==(Object other) => other is Cakupan && other.key == key;

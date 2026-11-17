@@ -218,12 +218,28 @@ class UpdateStokCard extends StatelessWidget {
   }
 }
 
-/// Peringkat per Sales: unit, value, % target. Ketuk untuk membuka beranda versi Sales itu.
-class PeringkatSalesCard extends StatelessWidget {
+/// Peringkat Sales atau Trainer: unit HP, value HP, tipe fokus, unit IoT vs target.
+/// Ketuk baris untuk membuka beranda versi Sales / Trainer itu.
+class PeringkatCard extends StatelessWidget {
+  final String judul;
   final List<Map<String, dynamic>> rows;
   final HariKerja hk;
-  final void Function(Map<String, dynamic> sales) onTap;
-  const PeringkatSalesCard({super.key, required this.rows, required this.hk, required this.onTap});
+
+  /// Kunci nama di data: 'sales' atau 'trainer'
+  final String namaKey;
+  final String idKey;
+  final String Function(Map<String, dynamic>) keterangan;
+  final void Function(Map<String, dynamic> row) onTap;
+  const PeringkatCard({
+    super.key,
+    required this.judul,
+    required this.rows,
+    required this.hk,
+    required this.namaKey,
+    required this.idKey,
+    required this.keterangan,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -231,7 +247,7 @@ class PeringkatSalesCard extends StatelessWidget {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          judulKartu(context, Icons.leaderboard, 'Peringkat Sales', sub: 'Urut value HP bulan ini · ketuk untuk detail'),
+          judulKartu(context, Icons.leaderboard, judul, sub: 'Urut value HP bulan ini · ketuk untuk detail'),
           if (rows.isEmpty) const Padding(padding: EdgeInsets.all(8), child: Text('Belum ada data')),
           for (var i = 0; i < rows.length; i++) _row(context, i + 1, rows[i]),
         ]),
@@ -239,30 +255,118 @@ class PeringkatSalesCard extends StatelessWidget {
     );
   }
 
+  Widget _metrik(String label, num capai, num target, String Function(num) f) {
+    final c = _warnaPct(capai, target, hk);
+    return Expanded(
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: TextStyle(fontSize: 10.5, color: Colors.grey.shade700)),
+        Text(f(capai), style: TextStyle(fontWeight: FontWeight.bold, fontSize: 12.5, color: c)),
+        Text(target > 0 ? '${_pct(capai, target)} dari ${f(target)}' : 'tanpa target',
+            style: TextStyle(fontSize: 10.5, color: c)),
+      ]),
+    );
+  }
+
   Widget _row(BuildContext context, int no, Map<String, dynamic> r) {
-    final u = toNum(r['unit']), tu = toNum(r['target_unit']);
-    final v = toNum(r['value']), tv = toNum(r['target_value']);
+    String unit(num v) => '${angka(v)} u';
     return InkWell(
-      onTap: r['sales_id'] == null ? null : () => onTap(r),
+      onTap: r[idKey] == null ? null : () => onTap(r),
       child: Padding(
         padding: const EdgeInsets.symmetric(vertical: 8),
-        child: Row(children: [
-          CircleAvatar(radius: 13, child: Text('$no', style: const TextStyle(fontSize: 12))),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('${r['sales'] ?? 'Tanpa Sales'}', style: const TextStyle(fontWeight: FontWeight.bold)),
-              Text('${r['area'] ?? ''} · ${r['toko']} toko · ${r['pc']} PC${r['trainer'] != null ? ' · Trainer ${r['trainer']}' : ''}',
-                  style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            CircleAvatar(radius: 12, child: Text('$no', style: const TextStyle(fontSize: 11))),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${r[namaKey] ?? 'Tanpa nama'}', style: const TextStyle(fontWeight: FontWeight.bold)),
+                Text(keterangan(r), style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
+              ]),
+            ),
+            const Icon(Icons.chevron_right, color: Colors.grey),
+          ]),
+          const SizedBox(height: 6),
+          Row(children: [
+            _metrik('Unit HP', toNum(r['unit']), toNum(r['target_unit']), unit),
+            _metrik('Value HP', toNum(r['value']), toNum(r['target_value']), rupiahSingkat),
+            _metrik('Tipe fokus', toNum(r['fokus']), toNum(r['target_fokus']), unit),
+            _metrik('Unit IoT', toNum(r['iot']), toNum(r['target_iot']), unit),
+          ]),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Sebaran PC menurut unit HP bulan ini (< 1, < 5, < 10, 10 ke atas) dan persentase dari total PC,
+/// plus produktivitas PC = total unit HP semua PC ÷ jumlah PC.
+class SebaranPcCard extends StatelessWidget {
+  final List<Map<String, dynamic>> pcs;
+  final void Function(Map<String, dynamic> pc) onTapPc;
+  const SebaranPcCard({super.key, required this.pcs, required this.onTapPc});
+
+  @override
+  Widget build(BuildContext context) {
+    final total = pcs.length;
+    final totalUnit = pcs.fold<num>(0, (a, p) => a + toNum(p['unit']));
+    final produktivitas = total > 0 ? totalUnit / total : 0;
+    final kelompok = <(String, Color, List<Map<String, dynamic>>)>[
+      ('< 1 unit', Colors.red.shade700, pcs.where((p) => toNum(p['unit']) < 1).toList()),
+      ('< 5 unit (1-4)', Colors.deepOrange, pcs.where((p) => toNum(p['unit']) >= 1 && toNum(p['unit']) < 5).toList()),
+      ('< 10 unit (5-9)', Colors.orange.shade800, pcs.where((p) => toNum(p['unit']) >= 5 && toNum(p['unit']) < 10).toList()),
+      ('10 unit ke atas', Colors.green.shade700, pcs.where((p) => toNum(p['unit']) >= 10).toList()),
+    ];
+    String persen(int n) => total > 0 ? '${(n / total * 100).toStringAsFixed(0)}%' : '-';
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          judulKartu(context, Icons.speed, 'Produktivitas PC', sub: 'Total unit HP bulan ini ÷ total PC yang dipegang'),
+          Row(children: [
+            Expanded(
+              child: Text('${produktivitas.toStringAsFixed(1)} unit / PC',
+                  style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold)),
+            ),
+            Text('${angka(totalUnit)} unit ÷ $total PC', style: TextStyle(color: Colors.grey.shade700)),
+          ]),
+          const Divider(height: 20),
+          const Text('Sebaran PC (unit HP bulan ini)', style: TextStyle(fontWeight: FontWeight.bold)),
+          const SizedBox(height: 4),
+          for (final k in kelompok)
+            Theme(
+              data: Theme.of(context).copyWith(dividerColor: Colors.transparent),
+              child: ExpansionTile(
+                tilePadding: EdgeInsets.zero,
+                dense: true,
+                title: Row(children: [
+                  Container(width: 10, height: 10, decoration: BoxDecoration(color: k.$2, shape: BoxShape.circle)),
+                  const SizedBox(width: 8),
+                  Expanded(child: Text(k.$1, style: const TextStyle(fontWeight: FontWeight.w600))),
+                  Text('${k.$3.length} PC · ${persen(k.$3.length)}',
+                      style: TextStyle(fontWeight: FontWeight.bold, color: k.$2)),
+                ]),
+                children: [
+                  if (k.$3.isEmpty) const Padding(padding: EdgeInsets.only(bottom: 8), child: Text('Tidak ada')),
+                  for (final p in k.$3)
+                    ListTile(
+                      dense: true,
+                      contentPadding: const EdgeInsets.only(left: 18),
+                      title: Text('${p['pc']}'),
+                      subtitle: Text('${p['toko']}'),
+                      trailing: Text('${angka(toNum(p['unit']))} unit'),
+                      onTap: () => onTapPc(p),
+                    ),
+                ],
+              ),
+            ),
+          const SizedBox(height: 4),
+          ClipRRect(
+            borderRadius: BorderRadius.circular(4),
+            child: Row(children: [
+              for (final k in kelompok)
+                if (k.$3.isNotEmpty) Expanded(flex: k.$3.length, child: Container(height: 8, color: k.$2)),
             ]),
           ),
-          Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
-            Text('${angka(u)} unit · ${_pct(u, tu)}',
-                style: TextStyle(fontWeight: FontWeight.w600, color: _warnaPct(u, tu, hk), fontSize: 12.5)),
-            Text('${rupiahSingkat(v)} · ${_pct(v, tv)}',
-                style: TextStyle(fontWeight: FontWeight.w600, color: _warnaPct(v, tv, hk), fontSize: 12.5)),
-          ]),
-          const Icon(Icons.chevron_right, color: Colors.grey),
         ]),
       ),
     );
