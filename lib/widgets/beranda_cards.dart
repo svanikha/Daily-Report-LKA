@@ -444,3 +444,127 @@ class DaftarPcCard extends StatelessWidget {
     );
   }
 }
+
+/// NOSELL terbanyak per PC (bulan ini): hari kerja tanpa penjualan HP & IoT.
+class NosellPcCard extends StatefulWidget {
+  final List<Map<String, dynamic>> pcs;
+  final void Function(Map<String, dynamic> pc) onTapPc;
+  const NosellPcCard({super.key, required this.pcs, required this.onTapPc});
+
+  @override
+  State<NosellPcCard> createState() => _NosellPcCardState();
+}
+
+class _NosellPcCardState extends State<NosellPcCard> {
+  bool _semua = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final list = widget.pcs.where((p) => toNum(p['nosell']) > 0).toList()
+      ..sort((a, b) => toNum(b['nosell']).compareTo(toNum(a['nosell'])));
+    final total = list.fold<num>(0, (a, p) => a + toNum(p['nosell']));
+    final tampil = _semua ? list : list.take(10).toList();
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          judulKartu(context, Icons.money_off, 'NOSELL terbanyak',
+              sub: 'Hari kerja bulan ini tanpa penjualan HP & IoT',
+              trailing: Text('${angka(total)} hari',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red.shade700))),
+          if (list.isEmpty)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 8),
+              child: Text('Tidak ada NOSELL bulan ini ✓', style: TextStyle(color: Colors.green.shade700)),
+            ),
+          for (var i = 0; i < tampil.length; i++)
+            InkWell(
+              onTap: () => widget.onTapPc(tampil[i]),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(vertical: 6),
+                child: Row(children: [
+                  SizedBox(width: 24, child: Text('${i + 1}', style: TextStyle(color: Colors.grey.shade600))),
+                  Expanded(
+                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('${tampil[i]['pc']}', style: const TextStyle(fontWeight: FontWeight.w600)),
+                      Text('${tampil[i]['toko']}', style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
+                    ]),
+                  ),
+                  Pill('${tampil[i]['nosell']} hari', color: Colors.red.shade700),
+                ]),
+              ),
+            ),
+          if (list.length > 10)
+            TextButton(
+              onPressed: () => setState(() => _semua = !_semua),
+              child: Text(_semua ? 'Tampilkan 10 teratas' : 'Lihat semua (${list.length} PC)'),
+            ),
+        ]),
+      ),
+    );
+  }
+}
+
+/// Rekap NOSELL untuk MT: total hari NOSELL per wilayah Trainer dan per area Sales.
+class NosellRekapCard extends StatelessWidget {
+  final List<Map<String, dynamic>> trainer;
+  final List<Map<String, dynamic>> sales;
+  final num total;
+  final void Function(Map<String, dynamic>) onTapTrainer;
+  final void Function(Map<String, dynamic>) onTapSales;
+  const NosellRekapCard({
+    super.key,
+    required this.trainer,
+    required this.sales,
+    required this.total,
+    required this.onTapTrainer,
+    required this.onTapSales,
+  });
+
+  Widget _bagian(String judul, List<Map<String, dynamic>> rows, String namaKey, void Function(Map<String, dynamic>) onTap) {
+    final urut = [...rows]..sort((a, b) => toNum(b['nosell']).compareTo(toNum(a['nosell'])));
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Padding(
+        padding: const EdgeInsets.only(top: 8, bottom: 2),
+        child: Text(judul, style: const TextStyle(fontWeight: FontWeight.bold)),
+      ),
+      for (final r in urut)
+        InkWell(
+          onTap: () => onTap(r),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 5),
+            child: Row(children: [
+              Expanded(child: Text('${r[namaKey] ?? '-'}')),
+              Text('${r['pc']} PC · rata-rata ${toNum(r['pc']) > 0 ? (toNum(r['nosell']) / toNum(r['pc'])).toStringAsFixed(1) : '0'}',
+                  style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
+              const SizedBox(width: 8),
+              SizedBox(
+                width: 64,
+                child: Text('${angka(toNum(r['nosell']))} hari',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(fontWeight: FontWeight.bold, color: toNum(r['nosell']) > 0 ? Colors.red.shade700 : Colors.green.shade700)),
+              ),
+            ]),
+          ),
+        ),
+    ]);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Card(
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          judulKartu(context, Icons.money_off, 'NOSELL bulan ini',
+              sub: 'Total hari kerja PC tanpa penjualan · ketuk untuk detail',
+              trailing: Text('${angka(total)} hari',
+                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: Colors.red.shade700))),
+          _bagian('Per wilayah Trainer', trainer, 'trainer', onTapTrainer),
+          const Divider(),
+          _bagian('Per area Sales', sales, 'sales', onTapSales),
+        ]),
+      ),
+    );
+  }
+}

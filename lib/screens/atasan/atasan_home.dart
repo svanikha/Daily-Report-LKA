@@ -20,6 +20,7 @@ import 'audit_screen.dart';
 import 'brand_screen.dart';
 import 'export_screen.dart';
 import 'kpi_screen.dart';
+import 'ms_area_screen.dart';
 import 'offday_screen.dart';
 import 'organisasi_screen.dart';
 import 'produk_screen.dart';
@@ -225,7 +226,7 @@ class _AtasanHomeState extends State<AtasanHome> {
       namaKey: 'sales',
       idKey: 'sales_id',
       keterangan: (r) => '${r['area'] ?? ''} · ${r['toko']} toko · ${r['pc']} PC'
-          '${r['trainer'] != null && _level == 'mt' ? ' · Trainer ${r['trainer']}' : ''}',
+          '${r['trainer'] != null && _level == 'mt' ? ' · Trainer ${r['trainer']}' : ''} · NOSELL ${r['nosell'] ?? 0} hari',
       onTap: _bukaSales,
     );
     final peringkatTrainer = PeringkatCard(
@@ -234,10 +235,29 @@ class _AtasanHomeState extends State<AtasanHome> {
       hk: hk,
       namaKey: 'trainer',
       idKey: 'trainer_id',
-      keterangan: (r) => 'Sales: ${r['sales'] ?? '-'} · ${r['toko']} toko · ${r['pc']} PC',
+      keterangan: (r) => 'Sales: ${r['sales'] ?? '-'} · ${r['toko']} toko · ${r['pc']} PC · NOSELL ${r['nosell'] ?? 0} hari',
       onTap: _bukaTrainer,
     );
     final sebaran = SebaranPcCard(pcs: asList(_b['per_pc']), onTapPc: _bukaPc);
+    final nosellPc = NosellPcCard(pcs: asList(_b['per_pc']), onTapPc: _bukaPc);
+    final nosellRekap = NosellRekapCard(
+      trainer: asList(_b['per_trainer']),
+      sales: perSales,
+      total: toNum(_b['nosell_total']),
+      onTapTrainer: _bukaTrainer,
+      onTapSales: _bukaSales,
+    );
+    final msArea = Card(
+      child: ListTile(
+        leading: const Icon(Icons.pie_chart),
+        title: const Text('MS Allbrand semua toko', style: TextStyle(fontWeight: FontWeight.bold)),
+        subtitle: const Text('Satu tabel: OPPO vs semua brand per toko · hari ini & todate'),
+        trailing: const Icon(Icons.chevron_right),
+        onTap: () => Navigator.of(context).push(MaterialPageRoute(
+          builder: (_) => MsAreaScreen(filter: _filter, tanggal: _tanggal, judul: judul),
+        )),
+      ),
+    );
     final daftarPc = DaftarPcCard(rows: asList(_b['per_pc']), hk: hk, hariIni: hariIni, onTap: _bukaPc);
 
     final out = <Widget>[
@@ -248,11 +268,11 @@ class _AtasanHomeState extends State<AtasanHome> {
       TimegoneBar(hk: hk, tampilSisa: false),
       ...switch (_level) {
         // MT: semua area + peringkat per Sales
-        'mt' => [sellOut, peringkatTrainer, peringkat, hpIot, kategori, bayar, tipe],
+        'mt' => [sellOut, peringkatTrainer, peringkat, nosellRekap, msArea, hpIot, kategori, bayar, tipe],
         // Trainer: area Sales yang dipegang (gabungan & per Sales)
-        'trainer' => [sellOut, peringkat, sebaran, produktivitas, laporan, hpIot, kategori, bayar, tipe],
+        'trainer' => [sellOut, peringkat, sebaran, nosellPc, produktivitas, laporan, msArea, hpIot, kategori, bayar, tipe],
         // Sales (atau MT/Trainer membuka satu Sales)
-        _ => [sellOut, daftarPc, stok, produktivitas, laporan, hpIot, kategori, bayar, tipe],
+        _ => [sellOut, daftarPc, nosellPc, stok, msArea, produktivitas, laporan, hpIot, kategori, bayar, tipe],
       },
       if (_level != 'sales') ...[
         const SizedBox(height: 4),

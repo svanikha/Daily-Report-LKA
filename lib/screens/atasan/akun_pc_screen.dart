@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../services/akun.dart';
 import '../../services/presence_service.dart';
 import '../../services/session.dart';
 import '../../utils.dart';
@@ -22,6 +23,7 @@ class _AkunPcScreenState extends State<AkunPcScreen> {
   String? _error;
   List<Map<String, dynamic>> _stores = [];
   List<Map<String, dynamic>> _pcs = [];
+  List<Map<String, dynamic>> _sales = []; // Trainer: Sales yang dipegang
 
   Profile get me => Session.current!;
 
@@ -45,6 +47,13 @@ class _AkunPcScreenState extends State<AkunPcScreen> {
       _stores = res[0] as List<Map<String, dynamic>>;
       final ids = _stores.map((s) => toNum(s['id']).toInt()).toSet();
       _pcs = asList(res[1]).where((p) => ids.contains(toNum(p['store_id']).toInt())).toList();
+      if (me.isTrainer) {
+        final ts = asList(await db.from('trainer_sales').select('sales_id').eq('trainer_id', me.id));
+        final sid = ts.map((r) => '${r['sales_id']}').toList();
+        _sales = sid.isEmpty
+            ? []
+            : asList(await db.from('profiles').select('id,nama,auth_uid').inFilter('id', sid).order('nama'));
+      }
     } catch (e) {
       _error = errMsg(e);
     }
@@ -159,6 +168,31 @@ class _AkunPcScreenState extends State<AkunPcScreen> {
                   const InfoBanner('Ketuk PC untuk mengubah nama atau memindah toko. Tombol gembok = reset password '
                       '(PC lupa password): PC membuat password baru saat login berikutnya. PC baru cukup memilih '
                       'namanya di layar login lalu membuat password sendiri.'),
+                  if (_sales.isNotEmpty) ...[
+                    const SectionHeader('Sales yang kamu pegang'),
+                    for (final s in _sales)
+                      Card(
+                        margin: const EdgeInsets.only(bottom: 4),
+                        child: ListTile(
+                          leading: const Icon(Icons.badge),
+                          title: Text('${s['nama']}'),
+                          subtitle: Text(s['auth_uid'] == null ? 'Belum membuat password' : 'Sudah login'),
+                          trailing: s['auth_uid'] == null
+                              ? null
+                              : PopupMenuButton<String>(
+                                  enabled: !_busy,
+                                  onSelected: (v) {
+                                    if (v == 'atur') aturPasswordDialog(context, profileId: '${s['id']}', nama: '${s['nama']}');
+                                    if (v == 'reset') _reset(s);
+                                  },
+                                  itemBuilder: (_) => const [
+                                    PopupMenuItem(value: 'atur', child: Text('Atur password baru')),
+                                    PopupMenuItem(value: 'reset', child: Text('Reset (buat password sendiri)')),
+                                  ],
+                                ),
+                        ),
+                      ),
+                  ],
                   for (final s in _stores) ..._tokoSection(s),
                 ]),
     );
@@ -203,13 +237,15 @@ class _AkunPcScreenState extends State<AkunPcScreen> {
               onSelected: (v) {
                 if (v == 'ubah') _form(p);
                 if (v == 'reset') _reset(p);
+                if (v == 'atur') aturPasswordDialog(context, profileId: '${p['id']}', nama: '${p['nama']}');
                 if (v == 'hapus') _hapus(p);
                 if (v == 'riwayat') showRiwayatLogin(context, '${p['id']}', '${p['nama']}', StatusOnline.dari(p, parseWib));
               },
               itemBuilder: (_) => [
                 const PopupMenuItem(value: 'riwayat', child: Text('Riwayat login')),
                 const PopupMenuItem(value: 'ubah', child: Text('Ubah nama / pindah toko')),
-                if (p['auth_uid'] != null) const PopupMenuItem(value: 'reset', child: Text('Reset password')),
+                if (p['auth_uid'] != null) const PopupMenuItem(value: 'atur', child: Text('Atur password baru')),
+                if (p['auth_uid'] != null) const PopupMenuItem(value: 'reset', child: Text('Reset (buat password sendiri)')),
                 PopupMenuItem(value: 'hapus', child: Text(p['aktif'] == false ? 'Aktifkan lagi' : 'Nonaktifkan PC')),
               ],
             ),

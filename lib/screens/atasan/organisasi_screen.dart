@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../services/akun.dart';
 import '../../services/session.dart';
 import '../../utils.dart';
 import '../../widgets/widgets.dart';
@@ -191,11 +192,13 @@ class _OrganisasiScreenState extends State<OrganisasiScreen> {
             if (v == 'ubah') _formOrang('${p['role']}', p);
             if (v == 'trainer') _pilihTrainer(p);
             if (v == 'reset') _reset(p);
+            if (v == 'atur') aturPasswordDialog(context, profileId: '${p['id']}', nama: '${p['nama']}');
           },
           itemBuilder: (_) => [
             const PopupMenuItem(value: 'ubah', child: Text('Ubah nama / aktif')),
             if (sales) const PopupMenuItem(value: 'trainer', child: Text('Atur Trainer')),
-            if (p['auth_uid'] != null) const PopupMenuItem(value: 'reset', child: Text('Reset password')),
+            if (p['auth_uid'] != null) const PopupMenuItem(value: 'atur', child: Text('Atur password baru')),
+            if (p['auth_uid'] != null) const PopupMenuItem(value: 'reset', child: Text('Reset (buat password sendiri)')),
           ],
         ),
       ),

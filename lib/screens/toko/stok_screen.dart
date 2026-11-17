@@ -34,6 +34,12 @@ class _StokScreenState extends State<StokScreen> {
 
   PcHari get t => widget.toko;
 
+  /// PC setelah stok awal: hanya menambah barang masuk (angka di kolom = jumlah masuk).
+  bool get _modeTambah => (Session.current?.isPc ?? false) && _stokAwal != null;
+
+  /// Stok yang akan tersimpan untuk satu produk.
+  int _stokAkhir(int id) => _modeTambah ? (_sistem[id] ?? 0) + _val(id) : _val(id);
+
   @override
   void initState() {
     super.initState();
@@ -82,7 +88,7 @@ class _StokScreenState extends State<StokScreen> {
       _c.clear();
       for (final p in _products) {
         final id = toNum(p['id']).toInt();
-        _c[id] = TextEditingController(text: '${_sistem[id] ?? 0}');
+        _c[id] = TextEditingController(text: _modeTambah ? '0' : '${_sistem[id] ?? 0}');
       }
     } catch (e) {
       _error = errMsg(e);
@@ -114,10 +120,21 @@ class _StokScreenState extends State<StokScreen> {
           return;
         }
       }
-      final items = [for (final p in _products) {'product_id': p['id'], 'qty': _val(toNum(p['id']).toInt())}];
+      final items = [
+        for (final p in _products)
+          _modeTambah
+              ? {'product_id': p['id'], 'tambah': _val(toNum(p['id']).toInt())}
+              : {'product_id': p['id'], 'qty': _val(toNum(p['id']).toInt())},
+      ];
       final r = asMap(await Session.db.rpc('simpan_stok', params: {'p_store': t.storeId, 'p_items': items}));
       if (!mounted) return;
-      showMsg(context, awal ? 'Stok awal tersimpan' : 'Stok tersimpan · ${r['berubah'] ?? 0} produk dikoreksi');
+      showMsg(
+          context,
+          awal
+              ? 'Stok awal tersimpan'
+              : (_modeTambah
+                  ? 'Stok tersimpan · ${r['berubah'] ?? 0} produk bertambah'
+                  : 'Stok tersimpan · ${r['berubah'] ?? 0} produk dikoreksi'));
       Navigator.pop(context, true);
     } catch (e) {
       if (mounted) showErr(context, e);
@@ -131,7 +148,7 @@ class _StokScreenState extends State<StokScreen> {
     final q = _q.toLowerCase();
     final items = _products.where((p) => q.isEmpty || '${p['nama']} ${p['grup']}'.toLowerCase().contains(q)).toList();
     final kosongFokus = _products
-        .where((p) => p['fokus'] != null && _val(toNum(p['id']).toInt()) <= 0)
+        .where((p) => p['fokus'] != null && _stokAkhir(toNum(p['id']).toInt()) <= 0)
         .map((p) => '${p['nama']}')
         .toList();
     return Scaffold(
@@ -179,8 +196,10 @@ class _StokScreenState extends State<StokScreen> {
                     )
                   else
                     InfoBanner(
-                      'Angka = stok terkini (sudah dipotong penjualan). Tambahkan barang masuk dan koreksi yang '
-                      'berbeda dengan fisik, lalu simpan.'
+                      _modeTambah
+                          ? 'Isi jumlah BARANG MASUK hari ini (0 jika tidak ada), lalu simpan. Stok terkini sudah '
+                              'otomatis dipotong penjualan. Jika stok tidak sesuai fisik, minta Sales/Trainer mengoreksi.'
+                          : 'Angka = stok terkini (sudah dipotong penjualan). Koreksi yang berbeda dengan fisik, lalu simpan.'
                       '${_cekHariIni == null ? '' : '\nSudah dicek hari ini pukul ${jamMenit(_cekHariIni!)} WIB.'}',
                       icon: _cekHariIni == null ? Icons.inventory_2 : Icons.check_circle,
                       color: _cekHariIni == null ? Colors.blueGrey : Colors.green.shade700,
@@ -221,8 +240,8 @@ class _StokScreenState extends State<StokScreen> {
     }
 
     final keys = grup.keys.toList()..sort((a, b) => urut(a).compareTo(urut(b)));
-    final totalHp = _products.where((p) => p['tipe'] == 'HP').fold<int>(0, (a, p) => a + _val(toNum(p['id']).toInt()));
-    final totalIot = _products.where((p) => p['tipe'] != 'HP').fold<int>(0, (a, p) => a + _val(toNum(p['id']).toInt()));
+    final totalHp = _products.where((p) => p['tipe'] == 'HP').fold<int>(0, (a, p) => a + _stokAkhir(toNum(p['id']).toInt()));
+    final totalIot = _products.where((p) => p['tipe'] != 'HP').fold<int>(0, (a, p) => a + _stokAkhir(toNum(p['id']).toInt()));
 
     return ListView(padding: const EdgeInsets.fromLTRB(12, 12, 12, 24), children: [
       InfoBanner(
@@ -260,7 +279,7 @@ class _StokScreenState extends State<StokScreen> {
     final hp = parts[0] == 'HP';
     final nama = parts[1];
     final c = hp ? warnaGrup(nama) : Colors.blueGrey.shade700;
-    final total = tipe.values.expand((l) => l).fold<int>(0, (a, p) => a + _val(toNum(p['id']).toInt()));
+    final total = tipe.values.expand((l) => l).fold<int>(0, (a, p) => a + _stokAkhir(toNum(p['id']).toInt()));
     const head = TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white);
     final rows = <TableRow>[
       TableRow(decoration: BoxDecoration(color: c), children: [
@@ -274,7 +293,7 @@ class _StokScreenState extends State<StokScreen> {
       final produk = e.value;
       for (var j = 0; j < produk.length; j++) {
         final p = produk[j];
-        final q = _val(toNum(p['id']).toInt());
+        final q = _stokAkhir(toNum(p['id']).toInt());
         final fokus = p['fokus'] != null;
         final varian = namaVarian('${p['nama']}');
         rows.add(TableRow(
@@ -338,7 +357,8 @@ class _StokScreenState extends State<StokScreen> {
   Widget _row(Map<String, dynamic> p, bool boleh) {
     final id = toNum(p['id']).toInt();
     final fokus = p['fokus'] != null;
-    final nol = _val(id) == 0;
+    final akhir = _stokAkhir(id);
+    final nol = akhir <= 0;
     return Card(
       margin: const EdgeInsets.only(bottom: 4),
       child: Padding(
@@ -347,6 +367,11 @@ class _StokScreenState extends State<StokScreen> {
           Expanded(
             child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('${p['nama']}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+              if (_modeTambah)
+                Text(
+                  'Stok ${_sistem[id] ?? 0}${_val(id) > 0 ? ' + ${_val(id)} masuk = $akhir' : ''}',
+                  style: TextStyle(fontSize: 11.5, color: akhir < 0 ? Colors.red.shade700 : Colors.grey.shade800),
+                ),
               if (fokus)
                 Text('Tipe fokus ${p['fokus']}${nol ? ' · KOSONG' : ''}',
                     style: TextStyle(fontSize: 11, color: nol ? Colors.red.shade700 : Colors.green.shade700)),
@@ -361,7 +386,10 @@ class _StokScreenState extends State<StokScreen> {
               textAlign: TextAlign.center,
               keyboardType: TextInputType.number,
               inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-              decoration: const InputDecoration(isDense: true, contentPadding: EdgeInsets.symmetric(vertical: 8)),
+              decoration: InputDecoration(
+                  isDense: true,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                  prefixText: _modeTambah ? '+' : null),
               onChanged: (_) => setState(() {}),
             ),
           ),

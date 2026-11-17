@@ -42,6 +42,54 @@ Future<void> changePasswordDialog(BuildContext context) async {
   }
 }
 
+/// Atur password baru untuk akun lain (MT: semua; Trainer: Sales & PC-nya; Sales: PC-nya).
+/// Password lama tidak bisa dilihat siapa pun; password baru ditampilkan sekali untuk diberitahukan.
+Future<void> aturPasswordDialog(BuildContext context, {required String profileId, required String nama}) async {
+  final c = TextEditingController();
+  final ok = await showDialog<bool>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      title: Text('Atur password $nama'),
+      content: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+        TextField(
+          controller: c,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Password baru (min. 6 karakter)'),
+        ),
+        const SizedBox(height: 8),
+        const Text('Beritahukan password ini ke pemilik akun. Ia bisa menggantinya sendiri di menu Akun.',
+            style: TextStyle(fontSize: 12)),
+      ]),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Batal')),
+        FilledButton(onPressed: () => Navigator.pop(ctx, true), child: const Text('Simpan')),
+      ],
+    ),
+  );
+  final pw = c.text.trim();
+  c.dispose();
+  if (ok != true || !context.mounted) return;
+  if (pw.length < 6) {
+    showMsg(context, 'Password minimal 6 karakter');
+    return;
+  }
+  try {
+    await Session.db.rpc('atur_password', params: {'p_profile': profileId, 'p_password': pw});
+    if (!context.mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.check_circle, color: Colors.green, size: 36),
+        title: const Text('Password tersimpan'),
+        content: SelectableText('$nama\nPassword: $pw', style: const TextStyle(fontSize: 16)),
+        actions: [FilledButton(onPressed: () => Navigator.pop(ctx), child: const Text('OK'))],
+      ),
+    );
+  } catch (e) {
+    if (context.mounted) showErr(context, e);
+  }
+}
+
 Future<void> logout(BuildContext context) async {
   final ok = await confirmDialog(context, 'Keluar?', 'Kamu perlu memasukkan password lagi saat masuk.', yes: 'Keluar');
   if (!ok) return;
