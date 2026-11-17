@@ -96,7 +96,7 @@ jobs:
           set -o pipefail
           echo "===== BUILD =====" >> ci-log.txt
           clean() { printf '%s' "$1" | tr -d '[:space:]"'"'"; }
-          SB_URL="$(clean "$SB_URL")"; SB_ANON="$(clean "$SB_ANON")"
+          SB_URL="$(clean "$SB_URL" | sed -E 's:/rest/v1/?$::; s:/+$::')"; SB_ANON="$(clean "$SB_ANON")"
           echo "Supabase: url=$SB_URL anon_key=${#SB_ANON}" | tee -a ci-log.txt
           DEFINES=(--dart-define="BUILD_NUMBER=${{ github.run_number }}"
                    --dart-define="UPDATE_CHANNEL=${{ github.ref == 'refs/heads/main' && 'rilis' || 'uji' }}")
@@ -167,7 +167,7 @@ jobs:
         run: |
           if [ -z "$SB_KEY" ] || [ -z "$SB_URL" ]; then echo "SUPABASE_SECRET_KEY / SUPABASE_URL belum diisi, langkah ini dilewati"; exit 0; fi
           SB_KEY="$(printf '%s' "$SB_KEY" | tr -d '[:space:]')"
-          SB_URL="$(printf '%s' "$SB_URL" | tr -d '[:space:]"' | sed 's:/*$::')"
+          SB_URL="$(printf '%s' "$SB_URL" | tr -d '[:space:]"' | sed -E 's:/rest/v1/?$::; s:/+$::')"
           F="DailyReportLKA-v1.0.$N.apk"
           BASE="$SB_URL/storage/v1/object"
           AUTH=(-H "apikey: $SB_KEY")
