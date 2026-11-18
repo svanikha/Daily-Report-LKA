@@ -50,6 +50,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
   String? _error;
   Map<String, dynamic> _b = {};
   int _rev = 0;
+  int _kalRev = 0; // naik hanya saat muat ulang manual, agar kalender tidak berkedip saat tanggal diketuk
   DateTime? _dimuat;
 
   /// MT bisa membuka beranda versi satu Trainer; MT / Trainer bisa membuka versi satu Sales.
@@ -92,6 +93,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
 
   /// Muat ulang manual / setelah data diubah: buang cache lalu ambil data baru dari server.
   Future<void> _segarkan() async {
+    _kalRev++;
     await CacheData.bersihkan();
     await _load();
   }
@@ -267,7 +269,8 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
       out.addAll([
         TimegoneBar(hk: hk, tampilSisa: false),
         KalenderPenjualan(
-          key: ValueKey('kal-$key'),
+          key: ValueKey('kal-${_filter.key}-$_kalRev'),
+          rev: _rev,
           selected: _tanggal,
           filter: _filter,
           onSelect: (d) {

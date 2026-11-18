@@ -4,6 +4,7 @@ import '../../services/session.dart';
 import '../../utils.dart';
 import '../../widgets/kontribusi_tipe.dart';
 import '../../widgets/widgets.dart';
+import '../toko/stok_kompetitor_screen.dart';
 
 /// Rekap stok terkini + DOS (days of stock) untuk MT & Manajer LKA:
 /// 1) total semua area per series, 2) per area Sales (ketuk untuk rincian series).
@@ -144,12 +145,86 @@ class _RekapStokScreenState extends State<RekapStokScreen> {
         ),
       );
 
+  /// Stok kompetitor (total per brand) dari daftar toko.
+  Widget _tabelKompetitor(Iterable<Map<String, dynamic>> toko) {
+    final m = {for (final b in brandStokKompetitor) b: 0};
+    var terisi = 0, jml = 0;
+    for (final t in toko) {
+      jml++;
+      final k = asMap(t['kompetitor']);
+      if (k.isNotEmpty) terisi++;
+      for (final b in brandStokKompetitor) {
+        m[b] = m[b]! + toNum(k[b]).toInt();
+      }
+    }
+    final total = m.values.fold(0, (a, b) => a + b);
+    const st = TextStyle(fontSize: 13);
+    const tb = TextStyle(fontSize: 13, fontWeight: FontWeight.bold);
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _tabel(const ['Brand', 'Stok'], [
+        for (final e in m.entries) DataRow(cells: [DataCell(Text(e.key, style: st)), DataCell(Text(angka(e.value), style: st))]),
+        DataRow(cells: [const DataCell(Text('Total', style: tb)), DataCell(Text(angka(total), style: tb))]),
+      ]),
+      Padding(
+        padding: const EdgeInsets.fromLTRB(4, 0, 4, 4),
+        child: Text('Diisi $terisi dari $jml toko', style: Theme.of(context).textTheme.bodySmall),
+      ),
+    ]);
+  }
+
+  /// Tabel per toko: stok & DOS HP/IoT + stok kompetitor. Ketuk untuk rincian series.
+  Widget _tabelToko(List<Map<String, dynamic>> toko) => _tabel(const ['Toko', 'Stok HP', 'DOS HP', 'Stok IoT', 'DOS IoT', 'Komp.'], [
+        for (final t in toko)
+          () {
+            final hp = _Baris(), iot = _Baris();
+            for (final r in asList(t['rows'])) {
+              (r['tipe'] == 'IOT' ? iot : hp).tambah(r);
+            }
+            final k = asMap(t['kompetitor']);
+            final komp = k.values.fold<num>(0, (a, v) => a + toNum(v));
+            TextStyle w(_Baris b) => TextStyle(color: _dosWarna(b), fontWeight: FontWeight.bold, fontSize: 13);
+            return DataRow(onSelectChanged: (_) => _rincianToko(t), cells: [
+              DataCell(Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('${t['toko']}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                if (t['stok_awal'] != true)
+                  Text('stok awal belum diisi', style: TextStyle(fontSize: 11, color: Colors.orange.shade800)),
+              ])),
+              DataCell(Text(angka(hp.stok))),
+              DataCell(Text(_dosTeks(hp), style: w(hp))),
+              DataCell(Text(angka(iot.stok))),
+              DataCell(Text(_dosTeks(iot), style: w(iot))),
+              DataCell(Text(k.isEmpty ? '-' : angka(komp))),
+            ]);
+          }(),
+      ]);
+
+  void _rincianToko(Map<String, dynamic> t) {
+    showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      builder: (ctx) => SafeArea(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(12),
+          child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('${t['toko']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 8),
+            _tabelSeries(asList(t['rows'])),
+            SectionHeader(t['kompetitor_pada'] == null
+                ? 'Stok kompetitor (belum diisi)'
+                : 'Stok kompetitor · ${tglPendek(parseWib('${t['kompetitor_pada']}'))}'),
+            _tabelKompetitor([t]),
+          ]),
+        ),
+      ),
+    );
+  }
+
   void _rincianArea(Map<String, dynamic> a) {
     showModalBottomSheet(
       context: context,
       isScrollControlled: true,
       builder: (ctx) => SafeArea(
-        child: Padding(
+        child: SingleChildScrollView(
           padding: const EdgeInsets.all(12),
           child: Column(mainAxisSize: MainAxisSize.min, crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('${a['area']}', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
@@ -157,6 +232,10 @@ class _RekapStokScreenState extends State<RekapStokScreen> {
                 style: const TextStyle(fontSize: 12)),
             const SizedBox(height: 8),
             _tabelSeries(asList(a['rows'])),
+            const SectionHeader('Per toko (ketuk untuk rincian)'),
+            _tabelToko(asList(a['toko_list'])),
+            const SectionHeader('Stok kompetitor area ini'),
+            _tabelKompetitor(asList(a['toko_list'])),
           ]),
         ),
       ),
@@ -194,7 +273,13 @@ class _RekapStokScreenState extends State<RekapStokScreen> {
                     ),
                     const SectionHeader('Total semua area'),
                     _tabelSeries(semuaRows),
-                    const SectionHeader('Per area Sales (ketuk untuk rincian series)'),
+                    if (_area.length == 1) ...[
+                      const SectionHeader('Per toko (ketuk untuk rincian series)'),
+                      _tabelToko(asList(_area.first['toko_list'])),
+                    ],
+                    const SectionHeader('Stok kompetitor'),
+                    _tabelKompetitor([for (final a in _area) ...asList(a['toko_list'])]),
+                    const SectionHeader('Per area Sales (ketuk untuk rincian per toko)'),
                     _tabel(const ['Area · Sales', 'Stok HP', 'DOS HP', 'Stok IoT', 'DOS IoT'], [
                       for (final a in _area)
                         () {

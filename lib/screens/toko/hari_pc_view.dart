@@ -16,6 +16,7 @@ import '../../widgets/widgets.dart';
 import 'cek_limit_screen.dart';
 import 'laporan_screen.dart';
 import 'ms_allbrand_screen.dart';
+import 'stok_kompetitor_screen.dart';
 import 'penjualan_bulan_screen.dart';
 import 'penjualan_screen.dart';
 import 'stok_screen.dart';
@@ -167,7 +168,8 @@ class HariPcViewState extends State<HariPcView> {
             onEdit: me.isPc || !me.bolehUbah ? null : _aturTargetHarian,
           ),
           KalenderPenjualan(
-            key: ValueKey('kal-${t.pcId}-$_rev'),
+            key: ValueKey('kal-${t.pcId}'),
+            rev: _rev,
             selected: t.tanggal,
             filter: Cakupan(pcId: t.pcId),
             onSelect: (d) => _open(PenjualanScreen(toko: t.salin(tanggal: d))),
@@ -242,6 +244,13 @@ class HariPcViewState extends State<HariPcView> {
                 : 'Dicek ${jamMenit(stokUpdate)}${pcLain.isNotEmpty ? ' · dipakai bersama ${pcLain.join(', ')}' : ''}',
         ok: stokUpdate != null,
         onTap: () => _open(StokScreen(toko: t)),
+      ),
+      _tile(
+        icon: Icons.store,
+        title: 'Stok kompetitor',
+        status: 'Total stok HP brand lain di toko (VIVO, SAMSUNG, dst.)',
+        ok: true,
+        onTap: () => _open(StokKompetitorScreen(toko: t)),
       ),
       _tile(
         icon: Icons.pie_chart,

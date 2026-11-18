@@ -20,7 +20,10 @@ class KalenderPenjualan extends StatefulWidget {
   final DateTime selected;
   final ValueChanged<DateTime>? onSelect;
   final Cakupan filter;
-  const KalenderPenjualan({super.key, required this.selected, this.onSelect, this.filter = const Cakupan()});
+
+  /// Naikkan untuk memuat ulang data tanpa membuat ulang kalender (tanpa kedip).
+  final int rev;
+  const KalenderPenjualan({super.key, required this.selected, this.onSelect, this.filter = const Cakupan(), this.rev = 0});
 
   @override
   State<KalenderPenjualan> createState() => _KalenderPenjualanState();
@@ -41,7 +44,7 @@ class _KalenderPenjualanState extends State<KalenderPenjualan> {
   @override
   void didUpdateWidget(covariant KalenderPenjualan old) {
     super.didUpdateWidget(old);
-    if (old.filter != widget.filter) _load();
+    if (old.filter != widget.filter || old.rev != widget.rev) _load();
   }
 
   Future<void> _load() async {

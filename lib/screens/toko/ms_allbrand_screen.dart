@@ -87,10 +87,9 @@ class _MsAllbrandScreenState extends State<MsAllbrandScreen> {
     final today = wibToday();
     if (me == null || d.isAfter(today)) return false;
     if (!me.isPc) return true; // atasan: koreksi toko di cakupannya (dijaga server)
-    return isSameDay(d, today); // PC hanya mengisi hari ini; todate dihitung otomatis
+    return !d.isBefore(_awal); // PC: tgl 1 s.d. hari ini di bulan berjalan
   }
 
-  bool get _pc => Session.current?.isPc ?? false;
 
   static String _segmenDariHarga(num harga) => harga < 3000000 ? 'lt3' : (harga < 6000000 ? '3to6' : 'gt6');
 
@@ -365,18 +364,9 @@ class _MsAllbrandScreenState extends State<MsAllbrandScreen> {
           : _error != null
               ? ErrorRetry(error: _error!, onRetry: _load)
               : ListView(padding: const EdgeInsets.fromLTRB(12, 8, 12, 32), children: [
-                  if (_pc)
-                    Card(
-                      child: ListTile(
-                        leading: const Icon(Icons.today),
-                        title: Text('Hari ini · ${hariTgl(_tgl)}', style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: const Text('Todate (tgl 1 s.d. hari ini) dihitung otomatis'),
-                      ),
-                    )
-                  else
-                    _pilihHari(),
+                  _pilihHari(),
                   if (!boleh)
-                    const InfoBanner('Tanggal ini tidak bisa diubah. PC hanya mengisi MS Allbrand hari ini.',
+                    const InfoBanner('Tanggal ini tidak bisa diubah. PC mengisi MS Allbrand tgl 1 s.d. hari ini di bulan berjalan.',
                         icon: Icons.lock_outline),
                   Card(
                     child: Padding(
@@ -402,15 +392,19 @@ class _MsAllbrandScreenState extends State<MsAllbrandScreen> {
                   ),
                   const SizedBox(height: 4),
                   Text(
-                      _pc
-                          ? 'Tambahkan unit HP brand lain yang terjual HARI INI di toko ini. Tersimpan otomatis. '
-                              'Todate = jumlah tgl 1 s.d. hari ini, dihitung otomatis.'
-                          : 'Isi unit HP brand lain yang terjual pada tanggal terpilih. Tanggal yang sudah lewat tetap bisa '
+                      'Isi unit HP brand lain yang terjual pada tanggal terpilih. Tanggal yang sudah lewat tetap bisa '
                               'dipilih dan diedit. Isian tiap tanggal tersimpan otomatis dan tidak hilang kecuali dihapus '
                               '(ikon tempat sampah). Todate = jumlah tgl 1 s.d. hari ini.',
                       style: Theme.of(context).textTheme.bodySmall),
                   const SizedBox(height: 8),
                   for (final b in _brands) _brandCard(b, hari, boleh, labelHari),
+                  if (boleh && _terisi.containsKey(_key))
+                    OutlinedButton.icon(
+                      onPressed: _saving ? null : _hapus,
+                      icon: const Icon(Icons.delete_outline),
+                      label: Text('Hapus isian tgl ${_tgl.day} (jika salah)'),
+                      style: OutlinedButton.styleFrom(foregroundColor: Colors.red.shade700, minimumSize: const Size.fromHeight(44)),
+                    ),
                 ]),
     );
   }
