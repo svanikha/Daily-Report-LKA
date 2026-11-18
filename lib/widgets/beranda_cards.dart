@@ -396,16 +396,18 @@ class _PencapaianStatusPcCardState extends State<PencapaianStatusPcCard> {
       toNum(p['unit_hari']) + toNum(p['iot_hari']) > 0 || p['nosell_hari'] == true;
   static bool _lengkap(Map<String, dynamic> p) => p['libur'] != null || (_lapor(p) && _stok(p) && _jual(p));
 
-  static DateTime _terakhir(Map<String, dynamic> p) =>
-      p['last_seen'] == null ? DateTime(2000) : parseWib('${p['last_seen']}');
+  /// Persentase pencapaian unit HP terhadap target (-1 jika target belum ada).
+  static num _capai(Map<String, dynamic> p) =>
+      toNum(p['target_unit']) > 0 ? toNum(p['unit']) / toNum(p['target_unit']) : -1;
 
   @override
   Widget build(BuildContext context) {
+    // Urut persentase achievement tertinggi, lalu value
     final list = [...widget.pcs]..sort((a, b) {
-        final k = toNum(b['hari_aktif']).compareTo(toNum(a['hari_aktif']));
+        final k = _capai(b).compareTo(_capai(a));
         if (k != 0) return k;
-        final t = _terakhir(b).compareTo(_terakhir(a));
-        return t != 0 ? t : '${a['pc']}'.compareTo('${b['pc']}');
+        final v = toNum(b['value']).compareTo(toNum(a['value']));
+        return v != 0 ? v : '${a['pc']}'.compareTo('${b['pc']}');
       });
     final kurang = list.where((p) => !_lengkap(p)).length;
     final tampil = _semua ? list : list.take(10).toList();
@@ -414,7 +416,7 @@ class _PencapaianStatusPcCardState extends State<PencapaianStatusPcCard> {
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           judulKartu(context, Icons.groups, 'Pencapaian & status PC',
-              sub: 'Urut PC paling aktif memakai aplikasi · ketuk untuk detail',
+              sub: 'Urut % achievement unit HP tertinggi · ketuk untuk detail',
               trailing: Column(crossAxisAlignment: CrossAxisAlignment.end, children: [
                 Text('$kurang/${list.length}',
                     style: TextStyle(

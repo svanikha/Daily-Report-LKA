@@ -1874,7 +1874,7 @@ begin
                            where pp.store_id = st.id and pp.role = 'pc' and pp.aktif))
                  order by a.nama, st.nama), '[]'::jsonb)
                  from public.stores st join public.areas a on a.id = st.area_id where st.id in (select id from toko))),
-    'per_sales', (select coalesce(jsonb_agg(x order by (x->>'value')::numeric desc), '[]'::jsonb) from (
+    'per_sales', (select coalesce(jsonb_agg(x order by coalesce((x->>'unit')::numeric / nullif((x->>'target_unit')::numeric, 0), -1) desc, (x->>'value')::numeric desc), '[]'::jsonb) from (
         select jsonb_build_object(
           'sales_id', a.sales_id,
           'sales', (select nama from public.profiles where id = a.sales_id),
@@ -1904,7 +1904,7 @@ begin
           from public.stores st0 join public.areas a on a.id = st0.area_id
          where st0.id in (select id from toko)
          group by a.sales_id) y),
-    'per_trainer', (select coalesce(jsonb_agg(x order by (x->>'value')::numeric desc), '[]'::jsonb) from (
+    'per_trainer', (select coalesce(jsonb_agg(x order by coalesce((x->>'unit')::numeric / nullif((x->>'target_unit')::numeric, 0), -1) desc, (x->>'value')::numeric desc), '[]'::jsonb) from (
         select jsonb_build_object(
           'trainer_id', tt.trainer_id,
           'trainer', (select nama from public.profiles where id = tt.trainer_id),
@@ -1922,7 +1922,7 @@ begin
           'toko', (select count(*) from tt_toko where trainer_id = tt.trainer_id),
           'pc', (select count(*) from pc where pc.store_id in (select store_id from tt_toko where trainer_id = tt.trainer_id))) as x
           from (select distinct trainer_id from tt_toko) tt) y),
-    'per_pc', (select coalesce(jsonb_agg(x order by (x->>'value')::numeric desc, x->>'pc'), '[]'::jsonb) from (
+    'per_pc', (select coalesce(jsonb_agg(x order by coalesce((x->>'unit')::numeric / nullif((x->>'target_unit')::numeric, 0), -1) desc, (x->>'value')::numeric desc, x->>'pc'), '[]'::jsonb) from (
         select jsonb_build_object(
           'pc_id', pc.id, 'pc', pc.nama, 'store_id', pc.store_id, 'toko', st.nama, 'libur', pc.libur,
           'unit', coalesce((select sum(qty) from s where s.pc_id = pc.id and tipe = 'HP'), 0),
@@ -2104,7 +2104,7 @@ language sql stable security definer set search_path = public as $$
   )
 $$;
 
--- Rekap stok terkini per area Sales & per series + penjualan bulan berjalan (untuk DOS di aplikasi).
+-- Rekap stok terkini (MT & Manajer: semua area; Trainer & Sales: area cakupannya) per area Sales & per series + penjualan bulan berjalan (untuk DOS di aplikasi).
 -- DOS (days of stock) = stok / rata-rata jual per hari (unit tgl 1 s.d. p_tanggal / jumlah hari).
 create or replace function public.rekap_stok(p_tanggal date) returns jsonb
 language plpgsql stable security definer set search_path = public as $$
@@ -2112,15 +2112,15 @@ declare
   v_awal date := date_trunc('month', p_tanggal)::date;
   r jsonb;
 begin
-  if coalesce(public.my_role(), '') not in ('mt', 'manajer') then raise exception 'Khusus MT dan Manajer LKA'; end if;
+  if not public.is_atasan() then raise exception 'Akses ditolak'; end if;
   with x as (
     select st.area_id, p.tipe, case when p.tipe = 'IOT' then 'IoT' else p.grup end as grup, s.qty as stok, 0 as jual
       from public.stok s join public.products p on p.id = s.product_id join public.stores st on st.id = s.store_id
-     where st.aktif
+     where st.aktif and st.area_id in (select public.area_cakupan())
     union all
     select st.area_id, j.tipe, case when j.tipe = 'IOT' then 'IoT' else coalesce(j.grup, '-') end, 0, j.qty
       from public.sales j join public.stores st on st.id = j.store_id
-     where j.tanggal between v_awal and p_tanggal
+     where j.tanggal between v_awal and p_tanggal and st.area_id in (select public.area_cakupan())
   ),
   g as (select area_id, tipe, grup, sum(stok) as stok, sum(jual) as jual from x group by area_id, tipe, grup)
   select jsonb_build_object(
@@ -2132,7 +2132,7 @@ begin
         'toko_stok_awal', (select count(*) from public.stores where area_id = a.id and aktif and stok_awal_pada is not null),
         'rows', (select coalesce(jsonb_agg(jsonb_build_object('tipe', g.tipe, 'grup', g.grup, 'stok', g.stok, 'jual', g.jual)), '[]'::jsonb)
                    from g where g.area_id = a.id))
-      order by a.nama), '[]'::jsonb) from public.areas a)
+      order by a.nama), '[]'::jsonb) from public.areas a where a.id in (select public.area_cakupan()))
   ) into r;
   return r;
 end $$;

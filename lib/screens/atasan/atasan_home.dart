@@ -333,6 +333,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
         onTap: _bukaTrainer,
       );
       out.addAll([
+        if (!me.lihatSemua) _kartuRekapStok(),
         if (_level == 'mt') ...[
           _kartuRekapStok(),
           peringkatTrainer,
@@ -419,7 +420,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
       const SectionHeader('Data PC'),
       item(Icons.table_chart, 'Export data Excel', 'Ringkasan harian per toko & per PC, penjualan, stok, MS, cek limit ($cak)',
           const ExportScreen()),
-      if (me.isMt) item(Icons.inventory, 'Rekap stok & DOS', 'Stok semua area & per area Sales', RekapStokScreen(tanggal: _tanggal)),
+      item(Icons.inventory, 'Rekap stok & DOS', me.isMt ? 'Stok semua area & per area Sales' : 'Stok & DOS $cak', RekapStokScreen(tanggal: _tanggal)),
       const SectionHeader('Pengaturan'),
       item(Icons.sell, 'Produk HP & IoT', me.isMt ? 'List produk per area, tambah ke semua area' : 'List produk $cak',
           const ProdukScreen()),
