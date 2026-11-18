@@ -164,7 +164,7 @@ class HariPcViewState extends State<HariPcView> {
             hari: hari,
             hk: hk,
             manual: _r['target_harian'] == null ? null : asMap(_r['target_harian']),
-            onEdit: me.isPc ? null : _aturTargetHarian,
+            onEdit: me.isPc || !me.bolehUbah ? null : _aturTargetHarian,
           ),
           KalenderPenjualan(
             key: ValueKey('kal-${t.pcId}-$_rev'),
@@ -172,7 +172,7 @@ class HariPcViewState extends State<HariPcView> {
             filter: Cakupan(pcId: t.pcId),
             onSelect: (d) => _open(PenjualanScreen(toko: t.salin(tanggal: d))),
           ),
-          if (t.bolehIsiPenjualan || !me.isPc)
+          if (t.bolehIsiPenjualan)
             Padding(
               padding: const EdgeInsets.only(bottom: 8),
               child: FilledButton.icon(

@@ -35,6 +35,11 @@ class Profile {
   bool get isTrainer => role == 'trainer';
   bool get isMt => role == 'mt';
 
+  /// Manajer LKA: melihat semua area seperti MT, tanpa bisa mengubah data.
+  bool get isManajer => role == 'manajer';
+  bool get lihatSemua => isMt || isManajer;
+  bool get bolehUbah => !isManajer;
+
   /// MT, Trainer, dan Sales memakai beranda atasan.
   bool get usesAdminHome => !isPc;
 
@@ -42,7 +47,7 @@ class Profile {
 
   /// Ringkasan cakupan untuk judul layar.
   String get cakupan => switch (role) {
-        'mt' => 'Semua area',
+        'mt' || 'manajer' => 'Semua area',
         'trainer' => 'Wilayah Trainer',
         'sales' => area.isEmpty ? 'Belum punya area' : 'Area $area',
         _ => toko,
@@ -67,6 +72,7 @@ String labelRole(String role) => switch (role) {
       'sales' => 'Sales',
       'trainer' => 'Trainer',
       'mt' => 'Manajer Trainer',
+      'manajer' => 'Manajer LKA',
       _ => role,
     };
 

@@ -27,6 +27,7 @@ import 'ms_area_screen.dart';
 import 'offday_screen.dart';
 import 'organisasi_screen.dart';
 import 'produk_screen.dart';
+import 'rekap_stok_screen.dart';
 import 'storage_screen.dart';
 import 'target_sales_screen.dart';
 import 'target_screen.dart';
@@ -62,7 +63,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
       );
 
   /// Tampilan yang dipakai: 'mt', 'trainer', atau 'sales'
-  String get _level => _sales != null ? 'sales' : (_trainer != null ? 'trainer' : me.role);
+  String get _level => _sales != null ? 'sales' : (_trainer != null ? 'trainer' : (me.isManajer ? 'mt' : me.role));
   bool get _bisaKembali => _sales != null || _trainer != null;
 
   @override
@@ -274,6 +275,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
             _load();
           },
         ),
+        if (me.bolehUbah)
         Padding(
           padding: const EdgeInsets.only(bottom: 8),
           child: OutlinedButton.icon(
@@ -332,6 +334,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
       );
       out.addAll([
         if (_level == 'mt') ...[
+          _kartuRekapStok(),
           peringkatTrainer,
           peringkatSales,
           NosellRekapCard(
@@ -368,7 +371,39 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
   }
 
   // ------------------------------------------------------------------
+  Widget _kartuRekapStok() => Card(
+        child: ListTile(
+          leading: const Icon(Icons.inventory),
+          title: const Text('Rekap stok & DOS', style: TextStyle(fontWeight: FontWeight.bold)),
+          subtitle: const Text('Stok semua area & per area Sales, berapa hari stok bertahan'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => Navigator.of(context).push(MaterialPageRoute(builder: (_) => RekapStokScreen(tanggal: _tanggal))),
+        ),
+      );
+
+  /// Manajer LKA: hanya melihat, tanpa menu pengaturan.
+  Widget _kelolaManajer() {
+    void go(Widget w) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => w));
+    Widget item(IconData icon, String title, String sub, Widget page) => Card(
+          child: ListTile(leading: Icon(icon), title: Text(title), subtitle: Text(sub), trailing: const Icon(Icons.chevron_right), onTap: () => go(page)),
+        );
+    return ListView(padding: const EdgeInsets.all(12), children: [
+      const InfoBanner('Akun Manajer LKA hanya untuk memantau. Semua data bisa dilihat, tetapi tidak bisa diubah.',
+          icon: Icons.visibility),
+      const SectionHeader('Data'),
+      item(Icons.inventory, 'Rekap stok & DOS', 'Stok semua area & per area Sales', RekapStokScreen(tanggal: _tanggal)),
+      item(Icons.table_chart, 'Export data Excel', 'Ringkasan harian, penjualan, stok, MS, cek limit (semua area)', const ExportScreen()),
+      item(Icons.history, 'Riwayat perubahan', 'Produk, harga, KPI, dan target', const AuditScreen()),
+      const SectionHeader('Akun'),
+      Card(child: ListTile(leading: const Icon(Icons.key), title: const Text('Ganti password'), onTap: () => changePasswordDialog(context))),
+      Card(child: ListTile(leading: const Icon(Icons.logout), title: const Text('Keluar'), onTap: () => logout(context))),
+      const SizedBox(height: 12),
+      Center(child: Text('Daily Report LKA · versi ${UpdateService.versionName}', style: Theme.of(context).textTheme.bodySmall)),
+    ]);
+  }
+
   Widget _kelola() {
+    if (me.isManajer) return _kelolaManajer();
     void go(Widget w) => Navigator.of(context).push(MaterialPageRoute(builder: (_) => w));
     Widget item(IconData icon, String title, String sub, Widget page) => Card(
           child: ListTile(
@@ -384,6 +419,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
       const SectionHeader('Data PC'),
       item(Icons.table_chart, 'Export data Excel', 'Ringkasan harian per toko & per PC, penjualan, stok, MS, cek limit ($cak)',
           const ExportScreen()),
+      if (me.isMt) item(Icons.inventory, 'Rekap stok & DOS', 'Stok semua area & per area Sales', RekapStokScreen(tanggal: _tanggal)),
       const SectionHeader('Pengaturan'),
       item(Icons.sell, 'Produk HP & IoT', me.isMt ? 'List produk per area, tambah ke semua area' : 'List produk $cak',
           const ProdukScreen()),

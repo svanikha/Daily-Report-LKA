@@ -21,7 +21,7 @@ create extension if not exists pgcrypto;
 create table if not exists public.profiles (
   id uuid primary key default gen_random_uuid(),
   nama text not null,
-  role text not null check (role in ('mt', 'trainer', 'sales', 'pc')),
+  role text not null check (role in ('mt', 'manajer', 'trainer', 'sales', 'pc')),   -- manajer = Manajer LKA (lihat saja)
   store_id int,                                 -- wajib untuk PC (FK ditambah setelah tabel stores)
   email text not null unique,
   auth_uid uuid unique references auth.users(id) on delete set null,
@@ -51,6 +51,8 @@ do $$ begin
   alter table public.profiles add constraint profiles_store_fk foreign key (store_id) references public.stores(id);
 exception when duplicate_object then null;
 end $$;
+alter table public.profiles drop constraint if exists profiles_role_check;
+alter table public.profiles add constraint profiles_role_check check (role in ('mt', 'manajer', 'trainer', 'sales', 'pc'));
 alter table public.profiles drop constraint if exists profiles_pc_store_check;
 alter table public.profiles add constraint profiles_pc_store_check check (role <> 'pc' or store_id is not null);
 
@@ -433,6 +435,12 @@ $$;
 
 create or replace function public.is_atasan() returns boolean
 language sql stable security definer set search_path = public as $$
+  select coalesce(public.my_role() in ('mt', 'manajer', 'trainer', 'sales'), false)
+$$;
+
+-- Boleh mengubah data (Manajer LKA hanya melihat)
+create or replace function public.is_pengubah() returns boolean
+language sql stable security definer set search_path = public as $$
   select coalesce(public.my_role() in ('mt', 'trainer', 'sales'), false)
 $$;
 
@@ -467,6 +475,7 @@ language sql stable security definer set search_path = public as $$
   select a.id from public.areas a
    where case public.my_role()
            when 'mt' then true
+           when 'manajer' then true
            when 'trainer' then a.sales_id in (select sales_id from public.trainer_sales where trainer_id = public.my_profile_id())
            when 'sales' then a.sales_id = public.my_profile_id()
            when 'pc' then a.id = public.store_area(public.my_store_id())
@@ -494,7 +503,7 @@ $$;
 create or replace function public.can_manage_store(p_store int) returns boolean
 language sql stable security definer set search_path = public as $$
   select coalesce((
-    public.is_atasan() and public.in_cakupan(public.store_area(p_store))
+    public.is_pengubah() and public.in_cakupan(public.store_area(p_store))
   ), false)
 $$;
 
@@ -1121,10 +1130,10 @@ end $$;
 -- Produk area: MT (semua), Trainer (area cakupan), Sales (areanya sendiri) boleh tambah & ubah. Tidak ada hapus.
 drop policy if exists products_ins on public.products;
 create policy products_ins on public.products for insert to authenticated
-  with check (public.is_atasan() and public.in_cakupan(area_id));
+  with check (public.is_pengubah() and public.in_cakupan(area_id));
 drop policy if exists products_upd on public.products;
 create policy products_upd on public.products for update to authenticated
-  using (public.is_atasan() and public.in_cakupan(area_id)) with check (public.is_atasan() and public.in_cakupan(area_id));
+  using (public.is_pengubah() and public.in_cakupan(area_id)) with check (public.is_pengubah() and public.in_cakupan(area_id));
 
 -- Penjualan
 drop policy if exists sales_select on public.sales;
@@ -1247,7 +1256,7 @@ language sql stable security definer set search_path = public as $$
            'toko', coalesce(s.nama, ''),
            'area', coalesce(sa.nama, (select string_agg(a.nama, ', ' order by a.nama) from public.areas a where a.sales_id = p.id), ''),
            'sudah_daftar', p.auth_uid is not null)
-         order by case p.role when 'mt' then 0 when 'trainer' then 1 when 'sales' then 2 else 3 end, p.nama), '[]'::jsonb)
+         order by case p.role when 'mt' then 0 when 'manajer' then 0 when 'trainer' then 1 when 'sales' then 2 else 3 end, p.nama), '[]'::jsonb)
     from public.profiles p
     left join public.stores s on s.id = p.store_id
     left join public.areas sa on sa.id = s.area_id
@@ -1386,7 +1395,7 @@ declare
   v_id int;
 begin
   if coalesce(trim(p_nama), '') = '' then raise exception 'Nama toko wajib diisi'; end if;
-  if not public.is_atasan() or not public.in_cakupan(p_area) then raise exception 'Area ini di luar cakupan kamu'; end if;
+  if not public.is_pengubah() or not public.in_cakupan(p_area) then raise exception 'Area ini di luar cakupan kamu'; end if;
   if p_id is null then
     insert into public.stores (nama, area_id) values (trim(p_nama), p_area) returning id into v_id;
     return v_id;
@@ -2095,6 +2104,39 @@ language sql stable security definer set search_path = public as $$
   )
 $$;
 
+-- Rekap stok terkini per area Sales & per series + penjualan bulan berjalan (untuk DOS di aplikasi).
+-- DOS (days of stock) = stok / rata-rata jual per hari (unit tgl 1 s.d. p_tanggal / jumlah hari).
+create or replace function public.rekap_stok(p_tanggal date) returns jsonb
+language plpgsql stable security definer set search_path = public as $$
+declare
+  v_awal date := date_trunc('month', p_tanggal)::date;
+  r jsonb;
+begin
+  if coalesce(public.my_role(), '') not in ('mt', 'manajer') then raise exception 'Khusus MT dan Manajer LKA'; end if;
+  with x as (
+    select st.area_id, p.tipe, case when p.tipe = 'IOT' then 'IoT' else p.grup end as grup, s.qty as stok, 0 as jual
+      from public.stok s join public.products p on p.id = s.product_id join public.stores st on st.id = s.store_id
+     where st.aktif
+    union all
+    select st.area_id, j.tipe, case when j.tipe = 'IOT' then 'IoT' else coalesce(j.grup, '-') end, 0, j.qty
+      from public.sales j join public.stores st on st.id = j.store_id
+     where j.tanggal between v_awal and p_tanggal
+  ),
+  g as (select area_id, tipe, grup, sum(stok) as stok, sum(jual) as jual from x group by area_id, tipe, grup)
+  select jsonb_build_object(
+    'dari', v_awal, 'sampai', p_tanggal, 'hari', p_tanggal - v_awal + 1,
+    'area', (select coalesce(jsonb_agg(jsonb_build_object(
+        'area_id', a.id, 'area', a.nama,
+        'sales', (select nama from public.profiles where id = a.sales_id),
+        'toko', (select count(*) from public.stores where area_id = a.id and aktif),
+        'toko_stok_awal', (select count(*) from public.stores where area_id = a.id and aktif and stok_awal_pada is not null),
+        'rows', (select coalesce(jsonb_agg(jsonb_build_object('tipe', g.tipe, 'grup', g.grup, 'stok', g.stok, 'jual', g.jual)), '[]'::jsonb)
+                   from g where g.area_id = a.id))
+      order by a.nama), '[]'::jsonb) from public.areas a)
+  ) into r;
+  return r;
+end $$;
+
 -- ---------------------------------------------------------------------
 -- 12. EXPORT DATA (Excel) - MT / Trainer / Sales, maksimal 93 hari
 -- ---------------------------------------------------------------------
@@ -2405,6 +2447,11 @@ select * from (values
   ('IOT', 'OPPO Enco Buds3 True Wireless Earbuds E', 'Audio', 299000, null, 130, 15000)
 ) as v(tipe, nama, grup, harga, fokus, urutan, insentif_awal)
 on conflict (tipe, nama) do nothing;
+
+-- Akun Manajer LKA (pengawas, hanya melihat). Membuat password sendiri saat login pertama.
+insert into public.profiles (nama, role, email)
+values ('ARDY YUSMINATA', 'manajer', 'manajer.ardy.yusminata@dailyreportlka.app')
+on conflict (email) do nothing;
 
 -- Akun Manajer Trainer. Buat juga di Authentication -> Users dengan email yang sama.
 insert into public.profiles (nama, role, email)

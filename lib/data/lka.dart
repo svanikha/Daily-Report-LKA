@@ -146,6 +146,7 @@ class PcHari {
     final me = Session.current;
     if (me == null || tanggal.isAfter(wibToday())) return false;
     if (me.isPc) return milikSaya;
+    if (!me.bolehUbah) return false; // Manajer LKA hanya melihat
     return true; // atasan: koreksi data PC di cakupannya (dijaga server)
   }
 
