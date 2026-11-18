@@ -173,7 +173,7 @@ class _RekapStokScreenState extends State<RekapStokScreen> {
   }
 
   /// Tabel per toko: stok & DOS HP/IoT + stok kompetitor. Ketuk untuk rincian series.
-  Widget _tabelToko(List<Map<String, dynamic>> toko) => _tabel(const ['Toko', 'Stok HP', 'DOS HP', 'Stok IoT', 'DOS IoT', 'Komp.'], [
+  Widget _tabelToko(List<Map<String, dynamic>> toko) => _tabel(['Toko · PC', 'Stok HP', 'DOS HP', 'Stok IoT', 'DOS IoT', for (final b in brandStokKompetitor) b, 'Total komp.'], [
         for (final t in toko)
           () {
             final hp = _Baris(), iot = _Baris();
@@ -186,6 +186,7 @@ class _RekapStokScreenState extends State<RekapStokScreen> {
             return DataRow(onSelectChanged: (_) => _rincianToko(t), cells: [
               DataCell(Column(mainAxisAlignment: MainAxisAlignment.center, crossAxisAlignment: CrossAxisAlignment.start, children: [
                 Text('${t['toko']}', style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                Text('${t['pc'] ?? '-'}', style: TextStyle(fontSize: 11, color: Colors.grey.shade700)),
                 if (t['stok_awal'] != true)
                   Text('stok awal belum diisi', style: TextStyle(fontSize: 11, color: Colors.orange.shade800)),
               ])),
@@ -193,7 +194,8 @@ class _RekapStokScreenState extends State<RekapStokScreen> {
               DataCell(Text(_dosTeks(hp), style: w(hp))),
               DataCell(Text(angka(iot.stok))),
               DataCell(Text(_dosTeks(iot), style: w(iot))),
-              DataCell(Text(k.isEmpty ? '-' : angka(komp))),
+              for (final b in brandStokKompetitor) DataCell(Text(k.isEmpty ? '-' : angka(toNum(k[b])))),
+              DataCell(Text(k.isEmpty ? '-' : angka(komp), style: const TextStyle(fontWeight: FontWeight.bold))),
             ]);
           }(),
       ]);
@@ -234,8 +236,6 @@ class _RekapStokScreenState extends State<RekapStokScreen> {
             _tabelSeries(asList(a['rows'])),
             const SectionHeader('Per toko (ketuk untuk rincian)'),
             _tabelToko(asList(a['toko_list'])),
-            const SectionHeader('Stok kompetitor area ini'),
-            _tabelKompetitor(asList(a['toko_list'])),
           ]),
         ),
       ),
@@ -277,8 +277,6 @@ class _RekapStokScreenState extends State<RekapStokScreen> {
                       const SectionHeader('Per toko (ketuk untuk rincian series)'),
                       _tabelToko(asList(_area.first['toko_list'])),
                     ],
-                    const SectionHeader('Stok kompetitor'),
-                    _tabelKompetitor([for (final a in _area) ...asList(a['toko_list'])]),
                     const SectionHeader('Per area Sales (ketuk untuk rincian per toko)'),
                     _tabel(const ['Area · Sales', 'Stok HP', 'DOS HP', 'Stok IoT', 'DOS IoT'], [
                       for (final a in _area)

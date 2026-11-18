@@ -2165,7 +2165,9 @@ begin
         'rows', (select coalesce(jsonb_agg(jsonb_build_object('tipe', q.tipe, 'grup', q.grup, 'stok', q.stok, 'jual', q.jual)), '[]'::jsonb)
                    from (select tipe, grup, sum(stok) as stok, sum(jual) as jual from g where g.area_id = a.id group by 1, 2) q),
         'toko_list', (select coalesce(jsonb_agg(jsonb_build_object(
-              'store_id', s.id, 'toko', s.nama, 'stok_awal', s.stok_awal_pada is not null,
+              'store_id', s.id, 'toko', s.nama,
+              'pc', (select string_agg(p.nama, ', ' order by p.nama) from public.profiles p where p.role = 'pc' and p.store_id = s.id and coalesce(p.aktif, true)),
+              'stok_awal', s.stok_awal_pada is not null,
               'rows', (select coalesce(jsonb_agg(jsonb_build_object('tipe', g.tipe, 'grup', g.grup, 'stok', g.stok, 'jual', g.jual)), '[]'::jsonb)
                          from g where g.store_id = s.id),
               'kompetitor', (select coalesce(jsonb_object_agg(k.brand, k.unit), '{}'::jsonb) from public.stok_kompetitor k where k.store_id = s.id),
