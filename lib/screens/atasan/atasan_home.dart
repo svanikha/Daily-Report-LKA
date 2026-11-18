@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../services/cache_data.dart';
 import '../../data/lka.dart';
 import '../../services/akun.dart';
 import '../../services/session.dart';
@@ -12,6 +13,7 @@ import '../../widgets/kontribusi_kategori.dart';
 import '../../widgets/kontribusi_tipe.dart';
 import '../../widgets/pickers.dart';
 import '../../widgets/sell_out_card.dart';
+import '../../widgets/muat_saat_diketuk.dart';
 import '../../widgets/widgets.dart';
 import '../toko/hari_pc_view.dart';
 import '../toko/penjualan_screen.dart';
@@ -87,6 +89,12 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
     if (d == null || DateTime.now().difference(d) > const Duration(minutes: 1)) _load();
   }
 
+  /// Muat ulang manual / setelah data diubah: buang cache lalu ambil data baru dari server.
+  Future<void> _segarkan() async {
+    await CacheData.bersihkan();
+    await _load();
+  }
+
   Future<void> _load() async {
     _dimuat = DateTime.now();
     setState(() {
@@ -94,7 +102,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
       _error = null;
     });
     try {
-      _b = asMap(await Session.db.rpc('beranda', params: {'p_tanggal': ymd(_tanggal), ..._filter.params}));
+      _b = asMap(await CacheData.rpc('beranda', {'p_tanggal': ymd(_tanggal), ..._filter.params}));
     } catch (e) {
       _error = errMsg(e);
     }
@@ -164,7 +172,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
       tanggal: _tanggal,
     );
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => StokScreen(toko: pc)));
-    _load();
+    _segarkan();
   }
 
   @override
@@ -188,7 +196,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
           actions: [
             if (_tab < 2) ...[
               IconButton(onPressed: _pickDate, icon: const Icon(Icons.calendar_month), tooltip: 'Pilih tanggal'),
-              IconButton(onPressed: _load, icon: const Icon(Icons.refresh), tooltip: 'Muat ulang'),
+              IconButton(onPressed: _segarkan, icon: const Icon(Icons.refresh), tooltip: 'Muat ulang'),
             ],
             const AkunMenuButton(),
           ],
@@ -225,7 +233,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
     final pc = await PcDetailScreen.muat(context, '${p['pc_id']}', _tanggal);
     if (pc == null || !mounted) return;
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => PenjualanScreen(toko: pc)));
-    _load();
+    _segarkan();
   }
 
   /// Riwayat penjualan cakupan beranda ini (per hari, per kategori tipe).
@@ -284,10 +292,22 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
           onTapHp: () => _riwayat('HP'),
           onTapIot: () => _riwayat('IOT'),
         ),
-        KontribusiTipe(key: ValueKey('kt-$key'), filter: _filter, tanggal: _tanggal),
+        MuatSaatDiketuk(
+            id: 'atasan-kt',
+            judul: 'Kontribusi tipe',
+            icon: Icons.donut_large,
+            builder: (_) => KontribusiTipe(key: ValueKey('kt-$key'), filter: _filter, tanggal: _tanggal)),
         KontribusiHpIot(bulan: asMap(_b['bulan'])),
-        KontribusiBayar(key: ValueKey('kb-$key'), filter: _filter, tanggal: _tanggal),
-        KontribusiKategori(key: ValueKey('kk-$key'), filter: _filter, tanggal: _tanggal),
+        MuatSaatDiketuk(
+            id: 'atasan-kb',
+            judul: 'Kontribusi cara bayar',
+            icon: Icons.payments,
+            builder: (_) => KontribusiBayar(key: ValueKey('kb-$key'), filter: _filter, tanggal: _tanggal)),
+        MuatSaatDiketuk(
+            id: 'atasan-kk',
+            judul: 'Kontribusi kategori user',
+            icon: Icons.groups,
+            builder: (_) => KontribusiKategori(key: ValueKey('kk-$key'), filter: _filter, tanggal: _tanggal)),
       ]);
     } else {
       // ---------------- LAPORAN: pencapaian per Trainer / Sales / PC & status hari itu ----------------
@@ -344,7 +364,7 @@ class _AtasanHomeState extends State<AtasanHome> with WidgetsBindingObserver {
         ),
       ]);
     }
-    return RefreshIndicator(onRefresh: _load, child: ListView(padding: const EdgeInsets.all(12), children: out));
+    return RefreshIndicator(onRefresh: _segarkan, child: ListView(padding: const EdgeInsets.all(12), children: out));
   }
 
   // ------------------------------------------------------------------

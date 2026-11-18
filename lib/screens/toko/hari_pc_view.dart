@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../../services/cache_data.dart';
 import '../../data/lka.dart';
 import '../../services/session.dart';
 import '../../utils.dart';
@@ -10,6 +11,7 @@ import '../../widgets/kontribusi_kategori.dart';
 import '../../widgets/kontribusi_tipe.dart';
 import '../../widgets/sell_out_card.dart';
 import '../../widgets/target_harian.dart';
+import '../../widgets/muat_saat_diketuk.dart';
 import '../../widgets/widgets.dart';
 import 'cek_limit_screen.dart';
 import 'laporan_screen.dart';
@@ -75,13 +77,19 @@ class HariPcViewState extends State<HariPcView> {
     if (old.pc.pcId != widget.pc.pcId || old.pc.tgl != widget.pc.tgl) load();
   }
 
+  /// Muat ulang manual / setelah data diubah: buang cache lalu ambil data baru dari server.
+  Future<void> segarkan() async {
+    await CacheData.bersihkan();
+    await load();
+  }
+
   Future<void> load() async {
     setState(() {
       _loading = _r.isEmpty;
       _error = null;
     });
     try {
-      _r = asMap(await Session.db.rpc('rekap_pc', params: {'p_pc': widget.pc.pcId, 'p_tanggal': widget.pc.tgl}));
+      _r = asMap(await CacheData.rpc('rekap_pc', {'p_pc': widget.pc.pcId, 'p_tanggal': widget.pc.tgl}));
       widget.onLoaded?.call(_r);
       _rev++;
     } catch (e) {
@@ -92,7 +100,7 @@ class HariPcViewState extends State<HariPcView> {
 
   Future<void> _open(Widget page) async {
     await Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
-    await load();
+    await segarkan();
     widget.onChanged?.call();
   }
 
@@ -105,7 +113,7 @@ class HariPcViewState extends State<HariPcView> {
     setState(() => _sending = true);
     try {
       await Session.db.rpc('kirim_laporan', params: {'p_tanggal': t.tgl});
-      await load();
+      await segarkan();
       widget.onChanged?.call();
       if (mounted) _open(LaporanScreen(pc: t));
     } catch (e) {
@@ -119,7 +127,7 @@ class HariPcViewState extends State<HariPcView> {
     final ok = await aturTargetHarianDialog(context, pcId: t.pcId, pcNama: t.pcNama, tanggal: t.tanggal,
         awal: _r['target_harian'] == null ? const {} : asMap(_r['target_harian']));
     if (ok) {
-      await load();
+      await segarkan();
       widget.onChanged?.call();
     }
   }
@@ -136,7 +144,7 @@ class HariPcViewState extends State<HariPcView> {
     final hk = HariKerja.dari(t.tanggal, offdaySisa: toNum(_r['offday_sisa']).toInt());
 
     return RefreshIndicator(
-      onRefresh: load,
+      onRefresh: segarkan,
       child: ListView(padding: const EdgeInsets.fromLTRB(12, 12, 12, 32), children: [
         if (!me.isPc)
           InfoBanner(
@@ -186,10 +194,26 @@ class HariPcViewState extends State<HariPcView> {
           ),
           // Insentif & estimasi gaji hanya di akun PC
           if (me.isPc) InsentifHariCard(key: ValueKey('ins-${t.pcId}-${t.tgl}-$_rev'), pcId: t.pcId, tanggal: t.tanggal),
-          if (me.isPc) EstimasiGajiCard(key: ValueKey('gaji-${t.pcId}-${t.tgl}-$_rev'), pcId: t.pcId, tanggal: t.tanggal, pcNama: t.pcNama),
-          KontribusiTipe(key: ValueKey('kt-${t.pcId}-${t.tgl}-$_rev'), filter: Cakupan(pcId: t.pcId), tanggal: t.tanggal),
+          if (me.isPc)
+            MuatSaatDiketuk(
+                id: 'pc-gaji',
+                judul: 'Estimasi gaji bulan ini',
+                icon: Icons.account_balance_wallet,
+                builder: (_) => EstimasiGajiCard(
+                    key: ValueKey('gaji-${t.pcId}-${t.tgl}-$_rev'), pcId: t.pcId, tanggal: t.tanggal, pcNama: t.pcNama)),
+          MuatSaatDiketuk(
+              id: 'pc-kt',
+              judul: 'Kontribusi tipe',
+              icon: Icons.donut_large,
+              builder: (_) => KontribusiTipe(
+                  key: ValueKey('kt-${t.pcId}-${t.tgl}-$_rev'), filter: Cakupan(pcId: t.pcId), tanggal: t.tanggal)),
           if (!me.isPc)
-            KontribusiKategori(key: ValueKey('kk-${t.pcId}-${t.tgl}-$_rev'), filter: Cakupan(pcId: t.pcId), tanggal: t.tanggal),
+            MuatSaatDiketuk(
+                id: 'pc-kk',
+                judul: 'Kontribusi kategori user',
+                icon: Icons.groups,
+                builder: (_) => KontribusiKategori(
+                    key: ValueKey('kk-${t.pcId}-${t.tgl}-$_rev'), filter: Cakupan(pcId: t.pcId), tanggal: t.tanggal)),
         ],
       ]),
     );

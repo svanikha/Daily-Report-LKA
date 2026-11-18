@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 
-import '../services/session.dart';
+import '../services/cache_data.dart';
 import '../utils.dart';
 import 'widgets.dart';
 
@@ -27,8 +27,7 @@ class _InsentifHariCardState extends State<InsentifHariCard> {
 
   Future<void> _load() async {
     try {
-      final r = asMap(await Session.db
-          .rpc('insentif_harian', params: {'p_pc': widget.pcId, 'p_tanggal': ymd(widget.tanggal)}));
+      final r = asMap(await CacheData.rpc('insentif_harian', {'p_pc': widget.pcId, 'p_tanggal': ymd(widget.tanggal)}));
       if (mounted) setState(() => _r = r);
     } catch (_) {
       if (mounted) setState(() => _gagal = true);

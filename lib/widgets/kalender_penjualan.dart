@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/cache_data.dart';
 import '../data/lka.dart';
-import '../services/session.dart';
 import '../utils.dart';
 import 'widgets.dart';
 
@@ -50,7 +50,7 @@ class _KalenderPenjualanState extends State<KalenderPenjualan> {
       _error = null;
     });
     try {
-      final rows = asList(await Session.db.rpc('kalender_penjualan', params: {'p_bulan': ymd(_bulan), ...widget.filter.params}));
+      final rows = asList(await CacheData.rpc('kalender_penjualan', {'p_bulan': ymd(_bulan), ...widget.filter.params}));
       _hari
         ..clear()
         ..addAll({for (final r in rows) '${r['tanggal']}': r});

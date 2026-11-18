@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../../data/lka.dart';
 import '../../services/akun.dart';
+import '../../services/cache_data.dart';
 import '../../services/notif_service.dart';
 import '../../services/session.dart';
 import '../../services/update_service.dart';
@@ -53,7 +54,8 @@ class _PcHomeState extends State<PcHome> {
     }
   }
 
-  void _muatUlang() {
+  Future<void> _muatUlang() async {
+    await CacheData.bersihkan();
     _beranda.currentState?.load();
     _laporan.currentState?.load();
   }

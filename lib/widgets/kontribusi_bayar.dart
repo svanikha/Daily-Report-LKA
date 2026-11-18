@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/cache_data.dart';
 import '../data/lka.dart';
-import '../services/session.dart';
 import '../utils.dart';
 import 'widgets.dart';
 
@@ -45,7 +45,7 @@ class _KontribusiBayarState extends State<KontribusiBayar> {
       _error = null;
     });
     try {
-      _rows = asList(await Session.db.rpc('kontribusi_bayar', params: {
+      _rows = asList(await CacheData.rpc('kontribusi_bayar', {
         'p_dari': ymd(monthStart(widget.tanggal)),
         'p_sampai': ymd(widget.tanggal),
         ...widget.filter.params,

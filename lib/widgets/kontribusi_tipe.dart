@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 
+import '../services/cache_data.dart';
 import '../data/lka.dart';
 import '../services/session.dart';
 import '../utils.dart';
@@ -65,8 +66,7 @@ class _KontribusiTipeState extends State<KontribusiTipe> {
 
   Future<void> _load() async {
     try {
-      final r = asList(await Session.db
-          .rpc('kontribusi_tipe', params: {...widget.filter.params, 'p_tanggal': ymd(widget.tanggal)}));
+      final r = asList(await CacheData.rpc('kontribusi_tipe', {...widget.filter.params, 'p_tanggal': ymd(widget.tanggal)}));
       if (mounted) setState(() => _rows = r);
     } catch (_) {
       // Fungsi kontribusi_tipe belum ada di server (tahap2f.sql): kartu disembunyikan.

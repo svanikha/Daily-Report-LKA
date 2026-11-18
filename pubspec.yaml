@@ -19,6 +19,7 @@ dependencies:
   url_launcher: any
   http: any
   share_plus: any
+  shared_preferences: any
   # Update di dalam aplikasi: unduh APK baru lalu buka layar pasang Android
   ota_update: ^7.1.0
   # Export data ke Excel (.xlsx) untuk MT, Trainer, Sales

@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 
+import '../services/cache_data.dart';
 import '../data/lka.dart';
-import '../services/session.dart';
 import '../utils.dart';
 
 const _urutan = ['Walk-in', 'Databased', 'Online', 'Belum diisi'];
@@ -47,8 +47,7 @@ class _KontribusiKategoriState extends State<KontribusiKategori> {
 
   Future<void> _load() async {
     try {
-      final r = asList(await Session.db
-          .rpc('kontribusi_kategori', params: {...widget.filter.params, 'p_tanggal': ymd(widget.tanggal)}));
+      final r = asList(await CacheData.rpc('kontribusi_kategori', {...widget.filter.params, 'p_tanggal': ymd(widget.tanggal)}));
       if (mounted) setState(() => _rows = r);
     } catch (_) {
       if (mounted) setState(() => _rows = const []);
