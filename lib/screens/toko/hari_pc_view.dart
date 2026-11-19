@@ -194,9 +194,8 @@ class HariPcViewState extends State<HariPcView> {
             onTapHp: () => _open(PenjualanBulanScreen(toko: t, tipe: 'HP')),
             onTapIot: () => _open(PenjualanBulanScreen(toko: t, tipe: 'IOT')),
           ),
-          // Insentif & estimasi gaji hanya di akun PC
+          // Insentif harian di akun PC; estimasi gaji di PC & atasan (lihat profil PC)
           if (me.isPc) InsentifHariCard(key: ValueKey('ins-${t.pcId}-${t.tgl}-$_rev'), pcId: t.pcId, tanggal: t.tanggal),
-          if (me.isPc)
             MuatSaatDiketuk(
                 id: 'pc-gaji',
                 judul: 'Estimasi gaji bulan ini',
